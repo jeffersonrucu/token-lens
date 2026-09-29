@@ -1,0 +1,84 @@
+{
+  "name": "tokenlens",
+  "private": true,
+  "license": "MIT",
+  "version": "0.1.12",
+  "description": "Painel local de uso de tokens do Claude Code, do Codex e do pi",
+  "author": "Jefferson Oliveira",
+  "type": "module",
+  "main": "electron/main.js",
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "dev": "vite",
+    "server:dev": "tsx watch src/server/index.ts",
+    "server": "tsx src/server/index.ts",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "app": "electron .",
+    "build:server": "tsc -p tsconfig.server.json"
+  },
+  "dependencies": {
+    "@dicebear/core": "^10.6.0",
+    "@dicebear/styles": "^10.5.0",
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
+    "@fontsource/dm-mono": "^5.3.0",
+    "argon2": "^0.45.1",
+    "chart.js": "^4.5.1",
+    "chartjs-plugin-zoom": "^2.2.0",
+    "fastify": "^5.12.0",
+    "lucide-react": "^1.31.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
+    "oxlint": "^1.75.0",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "build": {
+    "appId": "io.github.jeffersonrucu.tokenlens",
+    "productName": "TokenLens",
+    "directories": {
+      "output": "release",
+      "buildResources": "electron"
+    },
+    "files": [
+      "electron/**",
+      "build/**",
+      "dist/**",
+      "package.json",
+      "!**/argon2/build"
+    ],
+    "linux": {
+      "icon": "electron/icon.png",
+      "category": "Development",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "win": {
+      "icon": "electron/icon.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "electron/installer.nsh",
+      "deleteAppDataOnUninstall": true
+    }
+  }
+}

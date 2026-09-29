@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="14 27 139 139" role="img" aria-label="TokenLens">
+  <defs>
+    <linearGradient id="tp-a" gradientUnits="userSpaceOnUse" x1="88" y1="38" x2="104" y2="48">
+      <stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="currentColor"/>
+    </linearGradient>
+    <linearGradient id="tp-b" gradientUnits="userSpaceOnUse" x1="74" y1="0" x2="117" y2="0">
+      <stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="currentColor"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#tp-a)" d="M29 33H113A39 39 0 0 1 152 72V84L136 106V72A23 23 0 0 0 113 49H15Z"/>
+  <path fill="currentColor" d="M50 64H67V142L50 158Z"/>
+  <path fill="url(#tp-b)" d="M74 117V101a5 5 0 0 1 10 0V117ZM90.5 117V89a5 5 0 0 1 10 0V117ZM107 117V69.5a5 5 0 0 1 10 0V117Z"/>
+</svg>

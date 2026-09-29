@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo",
+    "allowImportingTsExtensions": false,
+    "rootDir": "src",
+    "outDir": "build",
+    "noEmit": false
+  },
+  "include": ["src/server"],
+  "exclude": ["src/server/**/*.test.ts"]
+}
