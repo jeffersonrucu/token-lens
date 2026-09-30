@@ -105,16 +105,35 @@ function SortHeader<K extends string>({
   );
 }
 
-// Token columns shared by the sessions and projects tables.
-type TokenSort = "turns" | "input" | "output" | "cacheRead" | "cacheWrite" | "total";
-const tokenColumns: [TokenSort, string][] = [
-  ["turns", "Turnos"],
-  ["input", "Entrada"],
-  ["output", "Saída"],
-  ["cacheRead", "Cache lido"],
-  ["cacheWrite", "Cache gravado"],
-  ["total", "Total"],
-];
+// Below this the row flags its cache, since most of the input was paid at full price.
+const LOW_CACHE = 0.8;
+const percent = new Intl.NumberFormat("pt-BR", { style: "percent" });
+type Totals = Pick<SessionUsage, "input" | "output" | "cacheRead" | "cacheWrite" | "cost">;
+
+/** Tokens with their mix, cache share and cost: the numeric cells shared by the sessions and projects tables. */
+function UsageCells({ totals }: { totals: Totals }) {
+  const share = cacheShare(totals);
+  return (
+    <>
+      <td>
+        <div className="tokens-cell">
+          <Tokens value={totalOf(totals)} />
+          <span className="token-bar row-bar" aria-hidden="true">
+            <i className="mix-input" style={{ flexGrow: totals.input }} />
+            <i className="mix-output" style={{ flexGrow: totals.output }} />
+            <i className="mix-cache-read" style={{ flexGrow: totals.cacheRead }} />
+            <i className="mix-cache-write" style={{ flexGrow: totals.cacheWrite }} />
+          </span>
+        </div>
+      </td>
+      <td className={share < LOW_CACHE ? "num low-cache" : "num"}>{percent.format(share)}</td>
+      {/* Zero means the model has no price, e.g. Codex, not a free session. */}
+      <td className="num cost" title={totals.cost ? undefined : "Sem preço para este modelo"}>
+        {totals.cost ? money(totals.cost) : "–"}
+      </td>
+    </>
+  );
+}
 
 function Pager({
   page,
@@ -161,9 +180,6 @@ const sessionSortValue: Record<SessionSort, (session: SessionUsage) => string | 
   cost: (session) => session.cost,
 };
 
-// Below this the row flags its cache, since most of the input was paid at full price.
-const LOW_CACHE = 0.8;
-const percent = new Intl.NumberFormat("pt-BR", { style: "percent" });
 
 // Manual mode with nothing chosen is empty on purpose; says where to change it.
 const manualEmpty = (privacy: Privacy) =>
@@ -342,7 +358,7 @@ export function SessionsScreen({
                           onOpen(session.id);
                         }}
                       >
-                        {session.title ? shortTitle(session.title) : "Sem título"}
+                        {session.title ?? "Sem título"}
                       </a>
                       <span>
                         <code title={session.id}>{session.id.slice(0, 8)}</code>
@@ -368,21 +384,7 @@ export function SessionsScreen({
                       {ago(session.lastAt, now)}
                     </span>
                   </td>
-                  <td>
-                    <div className="tokens-cell">
-                      <Tokens value={totalOf(session)} />
-                      <span className="token-bar row-bar" aria-hidden="true">
-                        <i className="mix-input" style={{ flexGrow: session.input }} />
-                        <i className="mix-output" style={{ flexGrow: session.output }} />
-                        <i className="mix-cache-read" style={{ flexGrow: session.cacheRead }} />
-                        <i className="mix-cache-write" style={{ flexGrow: session.cacheWrite }} />
-                      </span>
-                    </div>
-                  </td>
-                  <td className={cacheShare(session) < LOW_CACHE ? "num low-cache" : "num"}>
-                    {percent.format(cacheShare(session))}
-                  </td>
-                  <td className="num cost">{money(session.cost)}</td>
+                  <UsageCells totals={session} />
                 </tr>
               ))}
             </tbody>
@@ -411,8 +413,17 @@ type ProjectRow = Omit<SessionUsage, "id" | "harness" | "title" | "firstAt"> & {
   name: string;
   sessions: number;
 };
-type ProjectSort = "name" | "lastAt" | "sessions" | "cost" | TokenSort;
-const projectColumns: [ProjectSort, string][] = [["sessions", "Sessões"], ...tokenColumns, ["cost", "Custo"]];
+type ProjectSort = "name" | "lastAt" | "sessions" | "turns" | "total" | "cache" | "cost";
+const projectColumns: [ProjectSort, string][] = [["sessions", "Sessões"], ["turns", "Turnos"]];
+const projectSortValue: Record<ProjectSort, (project: ProjectRow) => string | number> = {
+  name: (project) => project.name,
+  lastAt: (project) => project.lastAt,
+  sessions: (project) => project.sessions,
+  turns: (project) => project.turns,
+  total: totalOf,
+  cache: cacheShare,
+  cost: (project) => project.cost,
+};
 
 function RemoveProjectDialog({
   project,
@@ -512,7 +523,7 @@ export function ProjectsScreen({
           [row.project, ...row.models].some((field) => field.toLowerCase().includes(term)),
         )
       : projects;
-    return sortRows(matches, sort, (row, key) => (key === "total" ? totalOf(row) : row[key]));
+    return sortRows(matches, sort, (row, key) => projectSortValue[key](row));
   }, [projects, query, sort]);
   const total = visible.reduce((sum, project) => sum + totalOf(project), 0);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
@@ -593,6 +604,9 @@ export function ProjectsScreen({
                 {projectColumns.map(([key, label]) => (
                   <SortHeader key={key} column={key} label={label} sort={sort} onSort={sortBy} className="num" />
                 ))}
+                <SortHeader column="total" label="Tokens" sort={sort} onSort={sortBy} />
+                <SortHeader column="cache" label="Cache" sort={sort} onSort={sortBy} className="num" />
+                <SortHeader column="cost" label="Custo" sort={sort} onSort={sortBy} className="num" />
                 <th><span className="sr-only">Ações</span></th>
               </tr>
             </thead>
@@ -631,12 +645,7 @@ export function ProjectsScreen({
                   </td>
                   <td className="num">{full.format(project.sessions)}</td>
                   <td className="num">{full.format(project.turns)}</td>
-                  <td className="num"><Tokens value={project.input} /></td>
-                  <td className="num"><Tokens value={project.output} /></td>
-                  <td className="num"><Tokens value={project.cacheRead} /></td>
-                  <td className="num"><Tokens value={project.cacheWrite} /></td>
-                  <td className="num total"><Tokens value={totalOf(project)} /></td>
-                  <td className="num cost">{money(project.cost)}</td>
+                  <UsageCells totals={project} />
                   <td>
                     <button
                       className="icon-button"

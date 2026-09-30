@@ -239,7 +239,7 @@ export const dateTime = new Intl.DateTimeFormat("pt-BR", {
   timeStyle: "short",
 });
 
-export const totalOf = (totals: Omit<TokenTotals, "cost">) =>
+export const totalOf = (totals: Pick<TokenTotals, "input" | "output" | "cacheRead" | "cacheWrite">) =>
   totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
 
 /** Share of the input side served from cache, 0–1. */

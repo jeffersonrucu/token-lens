@@ -198,7 +198,7 @@ export function OverviewScreen({
                       <Folder size={13} aria-hidden="true" />
                       {session.project ? projectLabel(session.project, privacy.hidePaths) : "sem pasta"}
                     </span>
-                    <b>{money(session.cost)}</b>
+                    <b title={session.cost ? undefined : "Sem preço para este modelo"}>{session.cost ? money(session.cost) : "–"}</b>
                   </span>
                   <strong>{session.title ?? "Sem título"}</strong>
                   <span>{[HARNESS_NAMES[session.harness], session.models[0]].filter(Boolean).join(" · ")}</span>
@@ -233,9 +233,10 @@ export function OverviewScreen({
               ) : (
                 <ol className="spend-bars">
                   {shown.map((bar, index) => (
-                    <li key={bar.key} className={index === shown.length - 1 ? "current" : undefined}>
-                      <span className="sr-only">{bar.label}: </span>
-                      <span className="spend-value">{bar.cost > 0 ? money(bar.cost) : ""}</span>
+                    <li key={bar.key} className={index === shown.length - 1 ? "current" : undefined} title={`${bar.label}: ${money(bar.cost)}`}>
+                      <span className="sr-only">{bar.label}: {money(bar.cost)}</span>
+                      {/* Only the peak is labeled: a value over every bar would not fit on narrow bars. */}
+                      <span className="spend-value" aria-hidden="true">{bar.cost > 0 && bar.cost === peak ? money(bar.cost) : ""}</span>
                       <i style={{ height: peak ? Math.max(bar.cost > 0 ? 3 : 0, (bar.cost / peak) * BAR_MAX) : 0 }} aria-hidden="true" />
                       <span className="spend-label" aria-hidden="true">{bar.label}</span>
                     </li>
@@ -256,7 +257,7 @@ export function OverviewScreen({
                       <i aria-hidden="true">
                         <b style={{ width: `${projects[0][1] ? (cost / projects[0][1]) * 100 : 0}%` }} />
                       </i>
-                      <strong>{money(cost)}</strong>
+                      <strong>{cost ? money(cost) : "–"}</strong>
                     </li>
                   ))}
                 </ul>
