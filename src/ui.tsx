@@ -225,6 +225,15 @@ export function periodStart(period: Period, now: number): number {
 }
 
 export const full = new Intl.NumberFormat("pt-BR");
+/** "parent/folder", so same-named folders stay apart; just "folder" when paths are hidden. */
+export function projectLabel(path: string, hidePaths: boolean): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.slice(hidePaths ? -1 : -2).join("/");
+}
+const usd = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD" });
+const usdSmall = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumSignificantDigits: 2 });
+// Sub-cent amounts would round to US$ 0,00, which reads as free.
+export const money = (value: number) => (value > 0 && value < 0.01 ? usdSmall : usd).format(value);
 export const dateTime = new Intl.DateTimeFormat("pt-BR", {
   dateStyle: "short",
   timeStyle: "short",
@@ -232,6 +241,12 @@ export const dateTime = new Intl.DateTimeFormat("pt-BR", {
 
 export const totalOf = (totals: Omit<TokenTotals, "cost">) =>
   totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
+
+/** Share of the input side served from cache, 0–1. */
+export function cacheShare(totals: Pick<TokenTotals, "input" | "cacheRead" | "cacheWrite">): number {
+  const sent = totals.input + totals.cacheRead + totals.cacheWrite;
+  return sent ? totals.cacheRead / sent : 0;
+}
 
 export function Tokens({ value }: { value: number }) {
   return <span title={full.format(value)}>{compact.format(value)}</span>;

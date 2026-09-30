@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -51,6 +50,8 @@ import {
   full,
   dateTime,
   totalOf,
+  cacheShare,
+  money,
   Tokens,
   type UsageStream,
   StatusBadge,
@@ -65,17 +66,6 @@ import {
 
 const DETAIL_REFRESH_MS = 3_000;
 
-const usd = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "USD",
-});
-const usdSmall = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "USD",
-  maximumSignificantDigits: 2,
-});
-// Sub-cent amounts would round to US$ 0,00, which reads as free.
-const money = (value: number) => (value > 0 && value < 0.01 ? usdSmall : usd).format(value);
 
 const percent = new Intl.NumberFormat("pt-BR", {
   style: "percent",
@@ -161,16 +151,10 @@ function SessionChat({
 
   const messages = [...older, ...tail];
   return (
-    <section className="terminal" aria-label="Chat da sessão">
-      <header className="terminal-bar">
-        <i aria-hidden="true" />
-        <i aria-hidden="true" />
-        <i aria-hidden="true" />
-        <span>{title}</span>
-      </header>
+    <section className="chat" aria-label={`Chat: ${title}`}>
       <ol
         ref={body}
-        className="terminal-body"
+        className="chat-body"
         onScroll={(event) => {
           const element = event.currentTarget;
           atBottom.current =
@@ -178,7 +162,7 @@ function SessionChat({
           if (element.scrollTop < 120) loadOlder();
         }}
       >
-        <li className="term-more">
+        <li className="chat-more">
           {start === 0 ? (
             "— início da sessão —"
           ) : (
@@ -190,24 +174,25 @@ function SessionChat({
           )}
         </li>
         {messages.map((message, index) => (
-          <li key={start + index} className={`term-${message.role}`}>
-            <span
-              className="term-mark"
-              aria-label={message.role === "user" ? "Você" : "Agente"}
-            >
-              {message.role === "user" ? ">" : "⏺"}
-            </span>
-            <div>
+          <li key={start + index} className={`chat-${message.role}`}>
+            {message.role === "assistant" && (
+              <span className="chat-avatar" aria-hidden="true">
+                AI
+              </span>
+            )}
+            <div className="chat-bubble">
+              <span className="sr-only">{message.role === "user" ? "Você:" : "Agente:"}</span>
               {message.text && <p>{message.text}</p>}
               {message.tools.length > 0 && (
-                <p className="term-tools">⎿ {toolSummary(message.tools)}</p>
+                <p className="chat-tools">{toolSummary(message.tools)}</p>
+              )}
+              {message.at && (
+                <time dateTime={message.at}>
+                  {timeOnly.format(new Date(message.at))}
+                  {message.role === "user" && " · você"}
+                </time>
               )}
             </div>
-            {message.at && (
-              <time dateTime={message.at}>
-                {timeOnly.format(new Date(message.at))}
-              </time>
-            )}
           </li>
         ))}
       </ol>
@@ -281,14 +266,21 @@ ${JSON.stringify(data, null, 1)}
 }
 
 function CountList({ title, items }: { title: string; items: Count[] }) {
+  const max = Math.max(0, ...items.map((item) => item.count));
   return (
     <section className="detail-card">
-      <h2>{title}</h2>
+      <h2>
+        {title}
+        <span>{full.format(items.reduce((sum, item) => sum + item.count, 0))}</span>
+      </h2>
       {items.length ? (
         <ul className="count-list">
           {items.map((item) => (
             <li key={item.name}>
               <span title={item.name}>{item.name}</span>
+              <i aria-hidden="true">
+                <b style={{ width: `${(item.count / max) * 100}%` }} />
+              </i>
               <strong>{full.format(item.count)}</strong>
             </li>
           ))}
@@ -869,8 +861,56 @@ function ContextChart({
   );
 }
 
+type SessionEvent = { at: number; title: string; note: string; tone?: "warning" | "live" };
+
+/** The session's notable moments, newest first: start, subagents, compactions, /clear and cost spikes. */
+function SessionEvents({ detail }: { detail: SessionDetail }) {
+  const { session, timeline } = detail;
+  const typical = timeline.length ? median(timeline.map((point) => point.cost)) : 0;
+  const events: SessionEvent[] = [
+    { at: Date.parse(session.lastAt), title: "Última resposta", note: `turno ${full.format(session.turns)}`, tone: "live" as const },
+    { at: Date.parse(session.firstAt), title: "Sessão iniciada", note: session.models[0] ?? HARNESS_NAMES[session.harness] },
+    ...detail.agents.flatMap((agent) => {
+      const first = agent.id !== "main" && timeline.find((point) => point.agentId === agent.id);
+      if (!first) return [];
+      return [{ at: Date.parse(first.at), title: `Subagente: ${agentName(agent)}`, note: `${agent.type} · ${startedBy(agent, detail)} · ${money(agent.cost)}` }];
+    }),
+    ...(detail.compactions ?? []).map((compaction) => ({
+      at: Date.parse(compaction.at),
+      title: compactionName(compaction),
+      note: `Contexto de ${compact.format(compaction.preTokens)} → ${compact.format(compaction.postTokens)}`,
+    })),
+    ...(detail.clear?.startedAt ? [{ at: Date.parse(detail.clear.startedAt), title: "Aberta por /clear", note: "O contexto começou do zero" }] : []),
+    ...(detail.clear?.endedAt ? [{ at: Date.parse(detail.clear.endedAt), title: "/clear", note: "A conversa seguiu em outra sessão" }] : []),
+    ...timeline
+      .filter((point) => typical > 0 && point.cost >= typical * SPIKE_FACTOR)
+      .map((point) => ({
+        at: Date.parse(point.at),
+        title: `Pico de custo · +${money(point.cost)}`,
+        note: `${Math.round(point.cost / typical)}× a mediana · ${point.agent}${point.tools.length ? ` · ${toolSummary(point.tools)}` : ""}`,
+        tone: "warning" as const,
+      })),
+  ].sort((a, b) => b.at - a.at);
+  const time = timeFormat(events.map((event) => event.at));
+  return (
+    <ol className="event-list">
+      {events.map((event, index) => (
+        <li key={index} className={event.tone}>
+          <time dateTime={new Date(event.at).toISOString()}>{time(event.at)}</time>
+          <i aria-hidden="true" />
+          <div>
+            <strong>{event.title}</strong>
+            <span>{event.note}</span>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 const detailSections = {
   summary: "Resumo",
+  events: "O que aconteceu",
   costChart: "Custo ao longo do tempo",
   contextChart: "Contexto por resposta",
   costByType: "Custo por tipo de token",
@@ -881,6 +921,12 @@ const detailSections = {
   chat: "Chat",
 } as const;
 export type DetailSection = keyof typeof detailSections;
+const tabLabels: Partial<Record<DetailSection, string>> = {
+  costChart: "Custo",
+  contextChart: "Contexto",
+  costByType: "Custo por tipo",
+  usage: "Ferramentas",
+};
 type SectionLayout = { order: DetailSection[]; hidden: DetailSection[] };
 export const ALL_SECTIONS = Object.keys(detailSections) as DetailSection[];
 // Until the user picks, only what helps spot waste shows.
@@ -938,7 +984,7 @@ function useSectionLayout() {
 }
 
 // A project sums sessions that ran days apart: no single chat, and its context line is only sessions opening and closing.
-export const PROJECT_EXCLUDED: DetailSection[] = ["contextChart", "chat"];
+export const PROJECT_EXCLUDED: DetailSection[] = ["contextChart", "chat", "events"];
 
 function SectionsPicker({
   order: all,
@@ -1354,6 +1400,7 @@ export function DetailBody({
     ["cache-write", "Cache gravado", session.cacheWrite],
   ];
   const spent = [detail.costs.input, detail.costs.output, detail.costs.cacheRead, detail.costs.cacheWrite];
+  const visible = order.filter((section) => show(section) && !excluded.includes(section));
   const blocks: Record<DetailSection, React.ReactNode> = {
     summary: (
       <>
@@ -1374,6 +1421,11 @@ export function DetailBody({
             </small>
           </div>
           <div>
+            <span>Cache</span>
+            <strong>{percent.format(cacheShare(session))}</strong>
+            <small>da entrada veio do cache</small>
+          </div>
+          <div>
             <span>Duração</span>
             <strong>{duration(Math.max(0, wallMs - detail.idleMs))}</strong>
             <small>{duration(detail.idleMs)} parado</small>
@@ -1381,7 +1433,10 @@ export function DetailBody({
           <div>
             <span>Turnos</span>
             <strong>{full.format(session.turns)}</strong>
-            <small>{full.format(subagents.length)} subagentes</small>
+            <small>
+              {full.format(subagents.length)} subagentes
+              {!!detail.compactions?.length && ` · ${full.format(detail.compactions.length)} compactações`}
+            </small>
           </div>
         </div>
         <section className="token-mix" aria-label="Composição dos tokens">
@@ -1407,6 +1462,12 @@ export function DetailBody({
         </section>
 
         
+      </>
+    ),
+    events: (
+      <>
+        <h2 className="detail-heading">O que aconteceu</h2>
+        <SessionEvents detail={detail} />
       </>
     ),
     costChart: (
@@ -1606,13 +1667,28 @@ export function DetailBody({
           ficaram fora do custo.
         </p>
       )}
-      {order.map(
-        (section) =>
-          show(section) &&
-          !excluded.includes(section) && (
-            <Fragment key={section}>{blocks[section]}</Fragment>
-          ),
+      {visible.length > 1 && (
+        <nav className="detail-tabs" aria-label="Seções">
+          {visible.map((section) => (
+            <a
+              key={section}
+              href={`#secao-${section}`}
+              onClick={(event) => {
+                event.preventDefault();
+                const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+                document.getElementById(`secao-${section}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
+              }}
+            >
+              {tabLabels[section] ?? detailSections[section]}
+            </a>
+          ))}
+        </nav>
       )}
+      {visible.map((section) => (
+        <div key={section} id={`secao-${section}`} className="detail-section">
+          {blocks[section]}
+        </div>
+      ))}
     </>
   );
 }

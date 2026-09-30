@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronUp, ChevronRight, EyeOff, Pencil, Search, StarOff } from "lucide-react";
-import { HARNESS_NAMES, usageApi, type Privacy, type SessionUsage } from "./api";
+import { ChevronDown, ChevronLeft, ChevronUp, ChevronRight, EyeOff, Pencil, Search, Star, StarOff } from "lucide-react";
+import { HARNESS_NAMES, usageApi, type Harness, type Privacy, type SessionUsage } from "./api";
 import {
   PrivacyContext,
   ToastContext,
@@ -11,6 +11,9 @@ import {
   full,
   dateTime,
   totalOf,
+  cacheShare,
+  money,
+  projectLabel,
   Tokens,
   type UsageStream,
   StatusBadge,
@@ -22,10 +25,10 @@ import {
   periodStart,
 } from "./ui";
 
-const ACTIVE_MS = 5 * 60 * 1000;
+export const ACTIVE_MS = 5 * 60 * 1000;
 
 /** Stand-in for a list whose stream has sent nothing yet; paused means nothing is coming. */
-function StreamPlaceholder({ status }: { status: StreamStatus }) {
+export function StreamPlaceholder({ status }: { status: StreamStatus }) {
   if (status === "paused") return <p className="sessions-empty">Monitoramento pausado.</p>;
   return <ListSkeleton label={statusLabel[status]} />;
 }
@@ -46,7 +49,7 @@ function PeriodSelect({ value, options, onChange }: { value: Period; options: Pe
 
 const relative = new Intl.RelativeTimeFormat("pt-BR", { numeric: "auto" });
 
-function ago(iso: string, now: number): string {
+export function ago(iso: string, now: number): string {
   const seconds = Math.round((new Date(iso).getTime() - now) / 1000);
   if (seconds > -60) return "agora";
   if (seconds > -3600) return relative.format(Math.round(seconds / 60), "minute");
@@ -148,7 +151,19 @@ function Pager({
   );
 }
 
-type SessionSort = "title" | "lastAt" | TokenSort;
+type SessionSort = "title" | "lastAt" | "total" | "cache" | "cost";
+
+const sessionSortValue: Record<SessionSort, (session: SessionUsage) => string | number> = {
+  title: (session) => session.title ?? "",
+  lastAt: (session) => session.lastAt,
+  total: totalOf,
+  cache: cacheShare,
+  cost: (session) => session.cost,
+};
+
+// Below this the row flags its cache, since most of the input was paid at full price.
+const LOW_CACHE = 0.8;
+const percent = new Intl.NumberFormat("pt-BR", { style: "percent" });
 
 // Manual mode with nothing chosen is empty on purpose; says where to change it.
 const manualEmpty = (privacy: Privacy) =>
@@ -170,28 +185,38 @@ export function SessionsScreen({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [sort, sortBy] = useSort<SessionSort>("lastAt", "title");
+  const [harness, setHarness] = useState<Harness | null>(null);
+  const [liveOnly, setLiveOnly] = useState(false);
+  const { favorites, save, remove } = useFavorites();
   const { privacy } = useContext(PrivacyContext);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(tick);
   }, []);
+  const inPeriod = useMemo(() => {
+    const since = periodStart(period, now);
+    return sessions.filter((session) => !session.lost && new Date(session.lastAt).getTime() >= since);
+  }, [sessions, period, now]);
+  const harnessCounts = useMemo(() => {
+    const counts = new Map<Harness, number>();
+    for (const session of inPeriod) counts.set(session.harness, (counts.get(session.harness) ?? 0) + 1);
+    return counts;
+  }, [inPeriod]);
   const visible = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const since = periodStart(period, now);
-    const matches = sessions.filter(
+    const matches = inPeriod.filter(
       (session) =>
-        !session.lost &&
-        new Date(session.lastAt).getTime() >= since &&
+        (!harness || session.harness === harness) &&
+        (!liveOnly || now - new Date(session.lastAt).getTime() < ACTIVE_MS) &&
         (!term ||
           [session.id, session.title, session.project, ...session.models].some((field) =>
             field?.toLowerCase().includes(term),
           )),
     );
-    return sortRows(matches, sort, (session, key) =>
-      key === "total" ? totalOf(session) : key === "title" ? (session.title ?? "") : session[key],
-    );
-  }, [sessions, query, sort, period, now]);
+    return sortRows(matches, sort, (session, key) => sessionSortValue[key](session));
+  }, [inPeriod, query, sort, harness, liveOnly, now]);
+  const starred = new Set(favorites?.map((favorite) => favorite.sessionId));
   const total = visible.reduce((sum, session) => sum + totalOf(session), 0);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   // Clamped on read: a narrower search can leave the stored page past the end.
@@ -204,7 +229,7 @@ export function SessionsScreen({
     <>
       <PageHeader
         eyebrow="CLAUDE CODE · CODEX · PI"
-        title="Uso por sessão"
+        title="Sessões"
         actions={<StatusBadge status={status} updates={updates} onRefresh={refresh} />}
       />
       <div className="sessions-toolbar">
@@ -229,6 +254,34 @@ export function SessionsScreen({
             setPage(1);
           }}
         />
+        <div className="filter-chips" role="group" aria-label="Agente">
+          {[null, ...harnessCounts.keys()].map((key) => (
+            <button
+              key={key ?? "all"}
+              type="button"
+              className="filter-chip"
+              aria-pressed={harness === key}
+              onClick={() => {
+                setHarness(key);
+                setPage(1);
+              }}
+            >
+              {key ? HARNESS_NAMES[key] : "Todos"} <span>{key ? harnessCounts.get(key) : inPeriod.length}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="filter-chip"
+            aria-pressed={liveOnly}
+            onClick={() => {
+              setLiveOnly((on) => !on);
+              setPage(1);
+            }}
+          >
+            <i className="active-dot" aria-hidden="true" />
+            Só ao vivo
+          </button>
+        </div>
         <div className="sessions-summary">
           <ClearHistoryButton className="button ghost" />
           <p>
@@ -244,12 +297,13 @@ export function SessionsScreen({
           <table className="sessions-table">
             <thead>
               <tr>
+                <th className="star-cell"><span className="sr-only">Favorito</span></th>
                 <SortHeader column="title" label="Sessão" sort={sort} onSort={sortBy} />
                 <th>Modelo</th>
-                <SortHeader column="lastAt" label="Última atividade" sort={sort} onSort={sortBy} />
-                {tokenColumns.map(([key, label]) => (
-                  <SortHeader key={key} column={key} label={label} sort={sort} onSort={sortBy} className="num" />
-                ))}
+                <SortHeader column="lastAt" label="Atividade" sort={sort} onSort={sortBy} />
+                <SortHeader column="total" label="Tokens" sort={sort} onSort={sortBy} />
+                <SortHeader column="cache" label="Cache" sort={sort} onSort={sortBy} className="num" />
+                <SortHeader column="cost" label="Custo" sort={sort} onSort={sortBy} className="num" />
               </tr>
             </thead>
             <tbody>
@@ -263,6 +317,18 @@ export function SessionsScreen({
                   }
                   className={updated.has(session.id) ? "just-updated" : undefined}
                 >
+                  <td className="star-cell">
+                    <button
+                      type="button"
+                      className="icon-button star-toggle"
+                      aria-pressed={starred.has(session.id)}
+                      aria-label={`${starred.has(session.id) ? "Remover dos favoritos" : "Favoritar"}: ${session.title ?? session.id}`}
+                      disabled={!favorites}
+                      onClick={() => void (starred.has(session.id) ? remove(session.id) : save(session.id, null))}
+                    >
+                      <Star size={16} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  </td>
                   <td>
                     <div className="session-cell">
                       <a
@@ -282,14 +348,18 @@ export function SessionsScreen({
                         <code title={session.id}>{session.id.slice(0, 8)}</code>
                         <span>{HARNESS_NAMES[session.harness]}</span>
                         {session.project && (
-                          <span title={privacy.hidePaths ? undefined : session.project}>
-                            {session.project.split(/[\\/]/).at(-1)}
+                          <span className="session-project" title={privacy.hidePaths ? undefined : session.project}>
+                            {projectLabel(session.project, privacy.hidePaths)}
                           </span>
                         )}
+                        <span>{full.format(session.turns)} turnos</span>
                       </span>
                     </div>
                   </td>
-                  <td className="models">{session.models.join(", ")}</td>
+                  <td title={session.models.join(", ")}>
+                    {session.models[0] && <span className="model-chip">{session.models[0]}</span>}
+                    {session.models.length > 1 && <span className="model-more">+{session.models.length - 1}</span>}
+                  </td>
                   <td>
                     {now - new Date(session.lastAt).getTime() < ACTIVE_MS && (
                       <i className="active-dot" aria-label="ativa" />
@@ -298,12 +368,21 @@ export function SessionsScreen({
                       {ago(session.lastAt, now)}
                     </span>
                   </td>
-                  <td className="num">{full.format(session.turns)}</td>
-                  <td className="num"><Tokens value={session.input} /></td>
-                  <td className="num"><Tokens value={session.output} /></td>
-                  <td className="num"><Tokens value={session.cacheRead} /></td>
-                  <td className="num"><Tokens value={session.cacheWrite} /></td>
-                  <td className="num total"><Tokens value={totalOf(session)} /></td>
+                  <td>
+                    <div className="tokens-cell">
+                      <Tokens value={totalOf(session)} />
+                      <span className="token-bar row-bar" aria-hidden="true">
+                        <i className="mix-input" style={{ flexGrow: session.input }} />
+                        <i className="mix-output" style={{ flexGrow: session.output }} />
+                        <i className="mix-cache-read" style={{ flexGrow: session.cacheRead }} />
+                        <i className="mix-cache-write" style={{ flexGrow: session.cacheWrite }} />
+                      </span>
+                    </div>
+                  </td>
+                  <td className={cacheShare(session) < LOW_CACHE ? "num low-cache" : "num"}>
+                    {percent.format(cacheShare(session))}
+                  </td>
+                  <td className="num cost">{money(session.cost)}</td>
                 </tr>
               ))}
             </tbody>
@@ -316,6 +395,13 @@ export function SessionsScreen({
           <Pager page={currentPage} pageCount={pageCount} onPage={setPage} />
         </div>
       )}
+      <ul className="chart-legend sessions-legend">
+        <li><i className="mix-input" />Entrada</li>
+        <li><i className="mix-output" />Saída</li>
+        <li><i className="mix-cache-read" />Cache lido</li>
+        <li><i className="mix-cache-write" />Cache gravado</li>
+        <li>· Cache = parte da entrada servida do cache</li>
+      </ul>
     </>
   );
 }
@@ -325,8 +411,8 @@ type ProjectRow = Omit<SessionUsage, "id" | "harness" | "title" | "firstAt"> & {
   name: string;
   sessions: number;
 };
-type ProjectSort = "name" | "lastAt" | "sessions" | TokenSort;
-const projectColumns: [ProjectSort, string][] = [["sessions", "Sessões"], ...tokenColumns];
+type ProjectSort = "name" | "lastAt" | "sessions" | "cost" | TokenSort;
+const projectColumns: [ProjectSort, string][] = [["sessions", "Sessões"], ...tokenColumns, ["cost", "Custo"]];
 
 function RemoveProjectDialog({
   project,
@@ -406,7 +492,7 @@ export function ProjectsScreen({
       if (!row)
         byProject.set(
           session.project,
-          (row = { project: session.project, name: session.project.split(/[\\/]/).at(-1) ?? session.project, sessions: 0, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastAt: session.lastAt }),
+          (row = { project: session.project, name: session.project.split(/[\\/]/).at(-1) ?? session.project, sessions: 0, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, lastAt: session.lastAt }),
         );
       row.sessions += 1;
       row.turns += session.turns;
@@ -414,6 +500,7 @@ export function ProjectsScreen({
       row.output += session.output;
       row.cacheRead += session.cacheRead;
       row.cacheWrite += session.cacheWrite;
+      row.cost += session.cost;
       for (const model of session.models) if (!row.models.includes(model)) row.models.push(model);
     }
     return [...byProject.values()];
@@ -549,6 +636,7 @@ export function ProjectsScreen({
                   <td className="num"><Tokens value={project.cacheRead} /></td>
                   <td className="num"><Tokens value={project.cacheWrite} /></td>
                   <td className="num total"><Tokens value={totalOf(project)} /></td>
+                  <td className="num cost">{money(project.cost)}</td>
                   <td>
                     <button
                       className="icon-button"

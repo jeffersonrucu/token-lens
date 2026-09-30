@@ -26,6 +26,8 @@ export type SessionUsage = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  // Estimated USD; replies of models without a price add nothing.
+  cost: number;
   firstAt: string;
   lastAt: string;
   // The agent deleted the transcript: it still counts for its project, but leaves the sessions list.
@@ -213,6 +215,8 @@ export const usageApi = {
     request<{ ok: true }>(`/usage/projects?path=${encodeURIComponent(path)}`, {
       method: "DELETE",
     }),
+  // USD per hour since `from`, keyed by the start of each UTC hour in ms.
+  spend: (from: string) => request<{ hours: [number, number][] }>(`/usage/spend?${new URLSearchParams({ from })}`),
   messages: (id: string, before: number, agent?: string) =>
     request<{ start: number; messages: ChatMessage[] }>(
       `/usage/sessions/${encodeURIComponent(id)}/messages?${new URLSearchParams({ before: String(before), ...(agent ? { agent } : {}) })}`,

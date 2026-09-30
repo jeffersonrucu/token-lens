@@ -1,7 +1,7 @@
 /* Palettes: add one as a [data-palette] block plus an entry in `palettes` (App.tsx).
    Keep colors as 6-digit hex: the charts append alpha to them. */
 :root {
-  --bg:#14161c; --surface:#1a1d24; --panel:#22262f; --sunken:#0f1115; --border:#2c313c; --line:#626b80;
+  --bg:#111318; --surface:#16181f; --panel:#1b1e26; --sunken:#0d0f13; --border:#262a34; --line:#626b80;
   --text:#eef0f4; --text-2:#c9ced8; --muted:#9aa2b1; --faint:#858d9d;
   --brand:#b584fd; --accent:#b584fd; --accent-2:#7ee6fd; --glow:#2a2140;
   --primary:#b584fd; --on-primary:#1a1030;
@@ -51,25 +51,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .app-shell { min-height:100vh;display:flex;background:var(--bg);color:var(--text) }
 .sidebar { position:sticky;top:0;width:236px;height:100vh;flex:0 0 236px;background:var(--surface);border-right:1px solid var(--border);padding:24px 12px 16px;display:flex;flex-direction:column }
 .brand { display:flex;align-items:center;gap:10px;min-height:48px;margin:0 0 28px;padding:0 12px;color:var(--text);text-decoration:none }
-.brand-logo { display:block;width:36px;height:auto;filter:drop-shadow(0 10px 22px #0005) }
-.brand-name { font-family:'Plus Jakarta Sans Variable', sans-serif;font-size:25px;font-weight:600;letter-spacing:-0.02em;color:var(--text) }
+.brand-logo { display:block;width:30px;height:auto;filter:drop-shadow(0 10px 22px #0005) }
+.brand-name { font-family:'Plus Jakarta Sans Variable', sans-serif;font-size:21px;font-weight:700;letter-spacing:-0.02em;color:var(--text) }
 .brand-name span { color:var(--brand) }
 .sidebar nav { display:grid;gap:4px }
-.nav-item { border:0;background:transparent;color:var(--text-2);text-align:left;border-radius:8px;padding:10px 12px;font-size:14px;line-height:20px }
-.nav-item:hover, .nav-item.active { background:var(--border);color:var(--text) }
-.main-content { min-width:0;flex:1;padding:32px clamp(20px,4vw,64px);overflow:clip }
-.page-header { display:flex;justify-content:space-between;gap:18px;align-items:flex-end;border-bottom:1px solid var(--border);padding-bottom:22px;margin-bottom:24px }
-.page-header p, .eyebrow { margin:0;color:var(--accent);font:500 10px 'DM Mono',monospace;letter-spacing:.1em }
-.page-header h1 { margin:7px 0 0;font-size:clamp(24px,3vw,32px);letter-spacing:-.05em }
-.header-actions { display:flex;gap:9px;flex-wrap:wrap }
-.button { border-radius:6px;padding:9px 12px;border:1px solid transparent;font-size:12px;font-weight:700 }
+.nav-item { border:0;background:transparent;color:var(--text-2);text-align:left;border-radius:8px;min-height:40px;padding:10px 12px;font-size:14px;font-weight:500;line-height:20px }
+.nav-item:hover { background:var(--panel);color:var(--text) }
+.nav-item.active { background:var(--border);color:var(--text);font-weight:600 }
+.main-content { min-width:0;flex:1;padding:36px clamp(20px,3.4vw,48px);overflow:clip }
+.page-header { display:flex;justify-content:space-between;gap:18px;align-items:flex-end;padding-bottom:20px;margin-bottom:8px }
+.page-header p, .eyebrow { margin:0;color:var(--muted);font:500 11px 'DM Mono',monospace;letter-spacing:.1em }
+.page-header h1 { margin:6px 0 0;font-size:clamp(24px,3vw,32px);font-weight:700;letter-spacing:-.03em }
+.header-actions { display:flex;align-items:center;gap:12px;flex-wrap:wrap }
+.button { min-height:36px;border-radius:8px;padding:0 12px;border:1px solid transparent;font-size:13px;font-weight:600 }
 .button.primary { background:var(--primary);color:var(--on-primary) }
 .button.secondary { background:transparent;color:var(--text-2);border-color:var(--line) }
 .button:hover { filter:brightness(1.08) }
 @media (max-width:900px) { .sidebar { width:60px;flex-basis:60px;padding:20px 8px } .brand { justify-content:center;margin:0 auto 26px;padding:0 } .brand-logo { width:38px } .brand-name { display:none } .nav-item { font-size:0;text-align:center;padding:11px 4px } .nav-item { justify-content:center } .sidebar-account { justify-content:center;padding:8px 0 } .sidebar-account span, .sidebar-account > svg { display:none } .sidebar-profile-menu { right:auto;width:220px } .main-content { padding:24px 20px } }
 @media (max-width:620px) { .page-header { align-items:flex-start;flex-direction:column } .header-actions { width:100% } .header-actions .button { flex:1 } .sidebar { display:none } .main-content { padding:20px 16px } }
 @media (prefers-reduced-motion:reduce) { *, *:before, *:after { transition:none!important;scroll-behavior:auto!important } }
-:root { font-family: 'Manrope Variable', system-ui, sans-serif; color: var(--text); background: var(--bg); color-scheme: dark; font-synthesis: none; text-rendering: optimizeLegibility; }
+:root { font-family: 'Plus Jakarta Sans Variable', system-ui, sans-serif; color: var(--text); background: var(--bg); color-scheme: dark; font-synthesis: none; text-rendering: optimizeLegibility; }
 html, body, #root { min-width: 0; min-height: 100%; margin: 0; }
 body { min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
@@ -103,7 +104,7 @@ button, input, select, textarea { font: inherit; }
 .avatar-picker span { color: var(--faint); font-size: 10px; }
 .avatar-picker button { display: flex; align-items: center; gap: 5px; width: max-content; border: 0; background: transparent; color: var(--accent); padding: 2px 0; font-size: 10px; }
 .onboarding-form > label { display: grid; gap: 6px; color: var(--muted); font: 10px "DM Mono", monospace; }
-.onboarding-form input:not([type="checkbox"]), .onboarding-form select { height: 39px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); padding: 0 10px; font: 12px Manrope, system-ui, sans-serif; }
+.onboarding-form input:not([type="checkbox"]), .onboarding-form select { height: 39px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); padding: 0 10px; font-size: 12px; }
 .password-field { position: relative; display: grid; }
 .onboarding-form .password-field input, .confirm-field .password-field input { padding-right: 38px; }
 .password-toggle { position: absolute; top: 50%; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; }

@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Activity, ChevronDown, FolderKanban, LogOut, ShieldCheck, Star, UserCog } from "lucide-react";
+import { Activity, ChevronDown, FolderKanban, LayoutDashboard, LogOut, ShieldCheck, Star, UserCog } from "lucide-react";
 import { authApi, metaApi, type Account } from "./api";
 import {
   PrivacyContext,
@@ -31,6 +31,7 @@ import {
 } from "./ui";
 import { FavoritesScreen, SessionsScreen, ProjectsScreen } from "./lists";
 import { SessionDetailScreen } from "./detail";
+import { OverviewScreen } from "./overview";
 
 // Screens off the everyday path load on demand, keeping them out of the first page load.
 const Onboarding = lazy(() => import("./onboarding").then((m) => ({ default: m.Onboarding })));
@@ -54,7 +55,7 @@ function AppShell({
   onNavigate,
 }: {
   children: React.ReactNode;
-  section: "sessions" | "projects" | "favorites" | "privacy" | "account";
+  section: "overview" | "sessions" | "projects" | "favorites" | "privacy" | "account";
   onNavigate: (to: string) => void;
 }) {
   const [profileOpen, setProfileOpen] = useState(false);
@@ -99,8 +100,15 @@ function AppShell({
         <Brand />
         <nav aria-label="Navegação principal">
           <button
-            className={section === "sessions" ? "nav-item active" : "nav-item"}
+            className={section === "overview" ? "nav-item active" : "nav-item"}
             onClick={() => onNavigate("/")}
+          >
+            <LayoutDashboard aria-hidden="true" size={16} strokeWidth={1.8} />
+            Visão geral
+          </button>
+          <button
+            className={section === "sessions" ? "nav-item active" : "nav-item"}
+            onClick={() => onNavigate("/sessions")}
           >
             <Activity aria-hidden="true" size={16} strokeWidth={1.8} />
             Sessões
@@ -212,10 +220,13 @@ function Monitor() {
   const inPrivacy = path === "/privacy";
   const inAccount = path === "/account";
   const inFavorites = path === "/favorites";
+  const inOverview = path === "/";
+  // The overview has no "all": its numbers are about recent use.
+  const overviewPeriod = urlPeriod(search, ["today", "week", "month"]);
   return (
     <PrivacyContext.Provider value={privacyContext}>
       <AppShell
-        section={inPrivacy ? "privacy" : inAccount ? "account" : inProjects ? "projects" : inFavorites ? "favorites" : "sessions"}
+        section={inPrivacy ? "privacy" : inAccount ? "account" : inProjects ? "projects" : inFavorites ? "favorites" : inOverview ? "overview" : "sessions"}
         onNavigate={navigate}
       >
         <Suspense fallback={<ListSkeleton label="Abrindo…" />}>
@@ -232,7 +243,7 @@ function Monitor() {
               id={decodeURIComponent(sessionId)}
               agent={agentId}
               stream={stream}
-              onBack={() => navigate(agentId ? `/sessions/${sessionId}` : "/")}
+              onBack={() => navigate(agentId ? `/sessions/${sessionId}` : "/sessions")}
               onOpenAgent={(agent) => navigate(`/sessions/${sessionId}/agents/${agent}`)}
               onOpenSession={(other) => navigate(`/sessions/${other}`)}
             />
@@ -253,6 +264,13 @@ function Monitor() {
               onPeriod={setPeriod}
               // Carried into the detail so it counts the same period as the list.
               onOpen={(project) => navigate(`/projects/${encodeURIComponent(project)}${periodQuery(projectPeriod)}`)}
+            />
+          ) : inOverview ? (
+            <OverviewScreen
+              stream={stream}
+              period={overviewPeriod === "all" ? "today" : overviewPeriod}
+              onPeriod={setPeriod}
+              onNavigate={navigate}
             />
           ) : (
             <SessionsScreen
