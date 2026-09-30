@@ -5,6 +5,8 @@ import { costOf, type Costs, type Usage } from './pricing.js'
 export type TokenTotals = { turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
 export type Count = { name: string; count: number }
 export type HookRun = { event: string; command: string; runs: number; failures: number; ms: number }
+// What tool results brought into the context: characters of text and images, both as recorded.
+export type ToolOutput = { name: string; chars: number; images: number }
 export type ChatMessage = { role: 'user' | 'assistant'; at: string; text: string; tools: string[] }
 
 export type SessionDetail = {
@@ -20,6 +22,8 @@ export type SessionDetail = {
   // Models with no known price; their tokens are left out of every cost.
   unpriced: string[]
   tools: Count[]
+  // Missing from summaries saved before it existed.
+  toolOutput?: ToolOutput[]
   mcp: Count[]
   skills: Count[]
   commands: Count[]
@@ -60,9 +64,19 @@ export type CostPoint = {
   output: number
   cacheRead: number
   cacheWrite: number
+  // Most of the cache write used the 1-hour TTL, so the prefix outlives a 5-minute pause.
+  ttl1h?: boolean
 }
 
-type Block = { type?: string; text?: string; name?: string; input?: { skill?: string } }
+type Block = {
+  type?: string
+  text?: string
+  name?: string
+  id?: string
+  tool_use_id?: string
+  content?: string | Block[]
+  input?: { skill?: string }
+}
 type Entry = {
   type?: string
   subtype?: string
@@ -108,6 +122,9 @@ function uncovered(spans: Span[], busy: Span[]): number {
 
 export const bump = (counts: Map<string, number>, name: string) => counts.set(name, (counts.get(name) ?? 0) + 1)
 
+// An MCP tool reads as `server › tool`, the way the MCP list names it.
+const toolLabel = (name: string) => (name.startsWith('mcp__') ? name.slice(5).replace('__', ' › ') : name)
+
 /** Turns a slash command line into `/name args`; returns null for any other user text. */
 function slashCommand(text: string): string | null {
   const name = /<command-name>(.*?)<\/command-name>/s.exec(text)?.[1]
@@ -150,6 +167,8 @@ export async function readSessionDetail(main: string, subagents: string[], since
   const skills = new Map<string, number>()
   const commands = new Map<string, number>()
   const hooks = new Map<string, HookRun>()
+  const toolNames = new Map<string, string>()
+  const toolOutput = new Map<string, ToolOutput>()
   const seen = new Set<string>()
   let lastReply: string | undefined
   let lastPrompt = ''
@@ -225,6 +244,18 @@ export async function readSessionDetail(main: string, subagents: string[], since
         continue
       }
 
+      if (entry.type === 'user' && Array.isArray(entry.message?.content))
+        for (const block of entry.message.content) {
+          if (block.type !== 'tool_result') continue
+          const name = toolNames.get(block.tool_use_id ?? '') ?? 'desconhecida'
+          let output = toolOutput.get(name)
+          if (!output) toolOutput.set(name, (output = { name, chars: 0, images: 0 }))
+          const parts = typeof block.content === 'string' ? [{ type: 'text', text: block.content }] : (block.content ?? [])
+          for (const part of parts) {
+            if (part.type === 'image') output.images += 1
+            else output.chars += part.text?.length ?? 0
+          }
+        }
       if (entry.type === 'user' && isMain && (agentView || !entry.isSidechain)) {
         const content = userText(entry)
         if (entry.isMeta && lastCommand && metaText(entry).startsWith('Base directory for this skill')) {
@@ -250,7 +281,8 @@ export async function readSessionDetail(main: string, subagents: string[], since
       for (const block of blocks) {
         if (block.type !== 'tool_use' || !block.name) continue
         names.push(block.name)
-        if (block.name.startsWith('mcp__')) bump(mcp, block.name.slice(5).replace('__', ' › '))
+        if (block.id) toolNames.set(block.id, toolLabel(block.name))
+        if (block.name.startsWith('mcp__')) bump(mcp, toolLabel(block.name))
         else bump(tools, block.name)
         if (block.name === 'Skill' && block.input?.skill) bump(skills, block.input.skill)
       }
@@ -296,6 +328,7 @@ export async function readSessionDetail(main: string, subagents: string[], since
           output: usage.output_tokens ?? 0,
           cacheRead: usage.cache_read_input_tokens ?? 0,
           cacheWrite: usage.cache_creation_input_tokens ?? 0,
+          ...((usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) * 2 > (usage.cache_creation_input_tokens ?? 0) ? { ttl1h: true } : {}),
         })
       const targets = model ? [totals, byModel.get(model) ?? byModel.set(model, emptyTotals()).get(model)!] : [totals]
       for (const target of targets) {
@@ -325,6 +358,7 @@ export async function readSessionDetail(main: string, subagents: string[], since
   detail.byModel = [...byModel].map(([model, totals]) => ({ model, ...totals }))
   detail.unpriced = [...unpriced]
   detail.tools = sorted(tools)
+  detail.toolOutput = [...toolOutput.values()].sort((a, b) => b.chars - a.chars)
   detail.mcp = sorted(mcp)
   detail.skills = sorted(skills)
   detail.commands = sorted(commands)
@@ -337,6 +371,16 @@ const mergeCounts = (lists: Count[][]): Count[] => {
   const counts = new Map<string, number>()
   for (const { name, count } of lists.flat()) counts.set(name, (counts.get(name) ?? 0) + count)
   return sorted(counts)
+}
+
+const mergeToolOutput = (outputs: ToolOutput[]): ToolOutput[] => {
+  const byName = new Map<string, ToolOutput>()
+  for (const { name, chars, images } of outputs) {
+    const output = byName.get(name) ?? byName.set(name, { name, chars: 0, images: 0 }).get(name)!
+    output.chars += chars
+    output.images += images
+  }
+  return [...byName.values()].sort((a, b) => b.chars - a.chars)
 }
 
 const addTotals = (target: TokenTotals, source: TokenTotals) => {
@@ -384,6 +428,7 @@ export function mergeDetails(details: SessionDetail[]): SessionDetail {
     agents: [...agents.values()],
     unpriced: [...new Set(details.flatMap((detail) => detail.unpriced))],
     tools: mergeCounts(details.map((detail) => detail.tools)),
+    toolOutput: mergeToolOutput(details.flatMap((detail) => detail.toolOutput ?? [])),
     mcp: mergeCounts(details.map((detail) => detail.mcp)),
     skills: mergeCounts(details.map((detail) => detail.skills)),
     commands: mergeCounts(details.map((detail) => detail.commands)),

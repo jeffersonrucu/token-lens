@@ -252,6 +252,7 @@ Notas sobre os campos:
 - \`timeline\` tem um ponto por resposta, com o custo daquela resposta.
 - \`messages\` traz só o trecho final do chat (a partir do índice \`messageStart\`)${privacy.hideChat ? "; aqui foi omitido por privacidade" : ""}.
 - \`idleMs\` é o tempo parado dentro do período da sessão.
+- \`toolOutput\` são os caracteres de texto e as imagens que cada ferramenta devolveu ao contexto.
 
 \`\`\`json
 ${JSON.stringify(data, null, 1)}
@@ -287,6 +288,37 @@ function CountList({ title, items }: { title: string; items: Count[] }) {
         </ul>
       ) : (
         <p className="detail-empty">Nenhum uso.</p>
+      )}
+    </section>
+  );
+}
+
+/** Text and images each tool returned, which stay in the context and are re-read on every reply. */
+function OutputList({ items }: { items: NonNullable<SessionDetail["toolOutput"]> }) {
+  const max = Math.max(0, ...items.map((item) => item.chars));
+  return (
+    <section className="detail-card">
+      <h2>
+        Retorno das ferramentas
+        <span>caracteres · imagens</span>
+      </h2>
+      {items.length ? (
+        <ul className="count-list output-list">
+          {items.map((item) => (
+            <li key={item.name}>
+              <span title={item.name}>{item.name}</span>
+              <i aria-hidden="true">
+                <b style={{ width: `${max ? (item.chars / max) * 100 : 0}%` }} />
+              </i>
+              <strong title={`${full.format(item.chars)} caracteres`}>
+                {compact.format(item.chars)}
+                {item.images > 0 && ` · ${full.format(item.images)} img`}
+              </strong>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="detail-empty">Nenhum retorno.</p>
       )}
     </section>
   );
@@ -600,8 +632,9 @@ function CostChart({ timeline: all, agents }: { timeline: CostPoint[]; agents: S
   );
 }
 
-// Cache entries expire after 5 minutes idle, so a longer pause rewrites the whole context.
+// Cache entries expire after 5 minutes idle (1 hour with the longer TTL), so a longer pause rewrites the whole context.
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_1H_MS = 60 * 60 * 1000;
 const contextSeries = [
   { key: "cacheRead", label: "Cache lido", mix: "cache-read" },
   { key: "input", label: "Entrada", mix: "input" },
@@ -690,12 +723,14 @@ function ContextChart({
     () =>
       points.flatMap((point, index) => {
         if (!index || point.cacheWrite <= point.cacheRead || compactedAt.has(index)) return [];
-        return [{ index, idleMs: Date.parse(point.at) - Date.parse(points[index - 1].at) }];
+        // The last write before the miss set how long the prefix would live.
+        const ttlMs = points.slice(0, index).findLast((previous) => previous.cacheWrite > 0)?.ttl1h ? CACHE_TTL_1H_MS : CACHE_TTL_MS;
+        return [{ index, idleMs: Date.parse(point.at) - Date.parse(points[index - 1].at), ttlMs }];
       }),
     [points, compactedAt],
   );
   const missCost = misses.reduce((sum, miss) => sum + points[miss.index].cost, 0);
-  const afterIdle = misses.filter((miss) => miss.idleMs > CACHE_TTL_MS).length;
+  const afterIdle = misses.filter((miss) => miss.idleMs > miss.ttlMs).length;
   const kinds = new Set(steps.flatMap((step) => (step.marker ? [step.marker] : [])));
   const { palette } = useContext(PaletteContext);
   useEffect(() => {
@@ -853,7 +888,7 @@ function ContextChart({
       <p className="cost-chart-note">
         <i aria-hidden="true" />
         {misses.length
-          ? `O cache foi perdido ${full.format(misses.length)}× (${full.format(afterIdle)} depois de mais de 5 min parado); essas respostas somaram ${money(missCost)}.`
+          ? `O cache foi perdido ${full.format(misses.length)}× (${full.format(afterIdle)} depois de uma pausa maior que o prazo do cache); essas respostas somaram ${money(missCost)}.`
           : "O cache se manteve em todas as respostas deste contexto."}
         {compactedAt.size > 0 && ` O contexto foi compactado ${full.format(compactedAt.size)}×.`}
       </p>
@@ -1575,6 +1610,7 @@ export function DetailBody({
       <>
         <div className="detail-grid">
           <CountList title="Ferramentas" items={detail.tools} />
+          {detail.toolOutput && <OutputList items={detail.toolOutput} />}
           <CountList title="MCPs" items={detail.mcp} />
           <CountList title="Skills" items={detail.skills} />
           <CountList title="Comandos" items={detail.commands} />

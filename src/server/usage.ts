@@ -31,6 +31,23 @@ export type SessionUsage = {
   lastAt: string
   // The agent deleted the transcript: the totals stay for the project, the session leaves the live list.
   lost?: boolean
+  // Context sent with the main agent's latest reply: the least the next reply will carry.
+  context?: number
+  // Ran /loop or scheduled its own wakeups, so it kept working without the user.
+  loop?: boolean
+  // Hook runs that timed out, were cancelled or failed, keyed by `event · command`.
+  hookFailures?: Record<string, { count: number; ms: number }>
+}
+
+/** Where a period's cost went, from each reply of the given sessions. */
+export type Breakdown = {
+  cost: number
+  subagents: number
+  loop: number
+  // Replies that carried at least BIG_CONTEXT tokens of context.
+  bigContext: number
+  // `agent` is the subagent type, or 'principal' for the main conversation.
+  agents: { agent: string; model: string; cost: number; turns: number }[]
 }
 
 export type ClaudeStatus =
@@ -41,11 +58,13 @@ type Listener = (event: UsageEvent, sessions: SessionUsage[]) => void
 type Counts = { input: number; output: number; cacheRead: number; cacheWrite: number }
 // Keeps what each message id already added, so a later line of the same reply adds only the difference.
 // `at` lets an account count a session only from its own start date.
-type Seen = Counts & { at: string; cost: number }
+// `agent` is set on subagent replies only.
+type Seen = Counts & { at: string; cost: number; model?: string; agent?: string }
 type Tracked = SessionUsage & { seen: Map<string, Seen>; customTitle: boolean }
 type CachedSession = SessionUsage & { seen: [string, Seen][]; customTitle: boolean }
 // What an earlier line of a Codex or pi file said, since later lines only carry usage.
-type FileContext = { session?: string; model?: string; cwd?: string; subagent?: boolean }
+// `agent` is a Claude Code subagent's type, from the .meta.json beside its transcript.
+type FileContext = { session?: string; model?: string; cwd?: string; subagent?: boolean; agent?: string }
 type Cache = { version: number; roots: string; files: [string, number][]; contexts: [string, FileContext][]; sessions: CachedSession[] }
 // One line of any harness, reduced to what the totals need.
 type Parsed = {
@@ -56,11 +75,14 @@ type Parsed = {
   customTitle?: boolean
   // The first prompt, used only while the session has no other title.
   promptTitle?: boolean
+  loop?: boolean
+  hookFailure?: { key: string; ms: number }
   reply?: { id: string; model?: string; counts: Counts; cost: number }
 }
 type Line = {
   type?: string
   sessionId?: string
+  attachment?: { type?: string; hookEvent?: string; command?: string; durationMs?: number; blockingError?: { command?: string } }
   cwd?: string
   timestamp?: string
   aiTitle?: string
@@ -68,6 +90,7 @@ type Line = {
   message?: {
     id?: string
     model?: string
+    content?: string | { type?: string; name?: string }[]
     usage?: Usage
   }
 }
@@ -75,7 +98,7 @@ type Line = {
 const NEWLINE = 0x0a
 // Only lines holding one of these are decoded; the rest is prompts and tool output.
 const NEEDLES: Record<Harness, Buffer[]> = {
-  claude: ['"usage"', 'Title"'].map((text) => Buffer.from(text)),
+  claude: ['"usage"', 'Title"', '<command-name>/loop<', '"hook_cancelled"', '"hook_non_blocking_error"', '"hook_blocking_error"'].map((text) => Buffer.from(text)),
   codex: ['"token_count"', '"session_meta"', '"turn_context"', '"UserMessage"'].map((text) => Buffer.from(text)),
   pi: ['"usage"', '"type":"session"', '"session_info"', '"role":"user"'].map((text) => Buffer.from(text)),
 }
@@ -89,7 +112,12 @@ const POLL_EVERY_MS = Number(process.env.MONITOR_POLL_MS ?? 3_000)
 // Bounds the buffer on a cold start, when a long transcript is read from its first byte.
 const READ_CHUNK = 4 * 1024 * 1024
 // Bump when the cached shape or the counting rules change, so old caches are rebuilt.
-const CACHE_VERSION = 5
+const CACHE_VERSION = 6
+// Past this much context every reply re-reads a large prefix; the page alerts at the same mark.
+export const BIG_CONTEXT = 100_000
+const FAILED_HOOKS = new Set(['hook_cancelled', 'hook_non_blocking_error', 'hook_blocking_error'])
+// Tools that schedule the session's next turn: /loop and its wakeups.
+const LOOP_TOOLS = new Set(['ScheduleWakeup', 'CronCreate'])
 
 const home = (variable: string, fallback: string) => process.env[variable] ?? join(homedir(), fallback)
 
@@ -300,6 +328,30 @@ export class UsageTracker {
     return hours
   }
 
+  /** Splits the cost of these sessions' replies from `since` on by subagent, /loop, context size and agent. */
+  breakdown(sessions: SessionUsage[], since: string): Breakdown {
+    const result: Breakdown = { cost: 0, subagents: 0, loop: 0, bigContext: 0, agents: [] }
+    const agents = new Map<string, Breakdown['agents'][number]>()
+    for (const { id } of sessions) {
+      const tracked = this.sessions.get(id)
+      for (const seen of tracked?.seen.values() ?? []) {
+        if (!seen.cost || seen.at < since) continue
+        result.cost += seen.cost
+        if (seen.agent) result.subagents += seen.cost
+        if (tracked!.loop) result.loop += seen.cost
+        if (seen.input + seen.cacheRead + seen.cacheWrite >= BIG_CONTEXT) result.bigContext += seen.cost
+        const agent = seen.agent ?? 'principal'
+        const key = `${agent}\n${seen.model}`
+        let row = agents.get(key)
+        if (!row) agents.set(key, (row = { agent, model: seen.model ?? '', cost: 0, turns: 0 }))
+        row.cost += seen.cost
+        row.turns += 1
+      }
+    }
+    result.agents = [...agents.values()].sort((a, b) => b.cost - a.cost)
+    return result
+  }
+
   /** Hides the project from every listing and pushes the new list to open pages. */
   ignore(project: string): void {
     this.ignored.add(project)
@@ -478,6 +530,11 @@ export class UsageTracker {
     const size = (await stat(path).catch(() => undefined))?.size
     this.mark(path, size === undefined, changed)
     if (size === undefined || size === this.files.get(path)) return
+    // Claude Code writes the type beside the transcript; without it yet, the next read tries again.
+    if (source.harness === 'claude' && !this.contexts.has(path) && basename(dirname(path)) === 'subagents') {
+      const { agentType } = await readAgentMeta(path)
+      if (agentType) this.contexts.set(path, { agent: agentType })
+    }
     const handle = await open(path, 'r').catch(() => undefined)
     if (!handle) return
     try {
@@ -558,6 +615,18 @@ export class UsageTracker {
     if (!parsed) return
     const session = this.session(parsed.session, harness)
     if (parsed.cwd) session.project ??= parsed.cwd
+    if (parsed.loop && !session.loop) {
+      session.loop = true
+      changed.add(session.id)
+    }
+    // ponytail: a rewritten file (read again from 0) counts its failures twice; key by line uuid if that shows up.
+    if (parsed.hookFailure) {
+      const failures = (session.hookFailures ??= {})
+      const failure = (failures[parsed.hookFailure.key] ??= { count: 0, ms: 0 })
+      failure.count += 1
+      failure.ms += parsed.hookFailure.ms
+      changed.add(session.id)
+    }
     if (parsed.title && !(parsed.promptTitle && session.title)) {
       if (parsed.customTitle) Object.assign(session, { title: parsed.title, customTitle: true })
       else if (!session.customTitle) session.title = parsed.title
@@ -569,7 +638,10 @@ export class UsageTracker {
     if (!previous) session.turns += 1
     for (const kind of Object.keys(reply.counts) as (keyof Counts)[]) session[kind] += reply.counts[kind] - (previous?.[kind] ?? 0)
     session.cost += reply.cost - (previous?.cost ?? 0)
-    session.seen.set(reply.id, { ...reply.counts, cost: reply.cost, at: parsed.at ?? previous?.at ?? '' })
+    const main = this.mainOf(path) !== undefined
+    const agent = main ? undefined : (context?.agent ?? 'subagente')
+    session.seen.set(reply.id, { ...reply.counts, cost: reply.cost, at: parsed.at ?? previous?.at ?? '', model: reply.model, ...(agent ? { agent } : {}) })
+    if (main) session.context = reply.counts.input + reply.counts.cacheRead + reply.counts.cacheWrite
     if (reply.model && reply.model !== '<synthetic>' && !session.models.includes(reply.model)) session.models.push(reply.model)
     if (parsed.at) {
       if (!session.firstAt || parsed.at < session.firstAt) session.firstAt = parsed.at
@@ -609,7 +681,14 @@ function parseClaude(entry: Line): Parsed | undefined {
   const base = { session: entry.sessionId }
   if (entry.customTitle) return { ...base, title: entry.customTitle, customTitle: true }
   if (entry.aiTitle) return { ...base, title: entry.aiTitle }
+  const attachment = entry.attachment
+  if (attachment?.hookEvent && FAILED_HOOKS.has(attachment.type ?? '')) {
+    const command = attachment.command ?? attachment.blockingError?.command ?? ''
+    return { ...base, hookFailure: { key: `${attachment.hookEvent} · ${command.slice(0, 120)}`, ms: attachment.durationMs ?? 0 } }
+  }
   const message = entry.message
+  const content = message?.content
+  if (entry.type === 'user' && typeof content === 'string' && content.includes('<command-name>/loop</command-name>')) return { ...base, loop: true }
   const usage = message?.usage
   if (entry.type !== 'assistant' || !usage || !message?.id) return undefined
   // Claude Code writes one line per content block; only the last carries the final output_tokens.
@@ -619,7 +698,8 @@ function parseClaude(entry: Line): Parsed | undefined {
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheWrite: usage.cache_creation_input_tokens ?? 0,
   }
-  return { ...base, at: entry.timestamp, cwd: entry.cwd, reply: { id: message.id, model: message.model, counts, cost: message.model ? sum(costOf(message.model, usage)) : 0 } }
+  const loop = Array.isArray(content) && content.some((block) => block.type === 'tool_use' && LOOP_TOOLS.has(block.name ?? ''))
+  return { ...base, at: entry.timestamp, cwd: entry.cwd, ...(loop ? { loop } : {}), reply: { id: message.id, model: message.model, counts, cost: message.model ? sum(costOf(message.model, usage)) : 0 } }
 }
 
 type CodexLine = {
@@ -988,7 +1068,8 @@ export function registerUsageRoutes(app: FastifyInstance, db: Database, usage: U
     const { from } = z.object({ from: z.iso.datetime() }).parse(request.query)
     const privacy = narrowed(readPrivacy(db, user.id), from)
     const sessions = view(privacy, usage.list())
-    return { hours: [...usage.spend(sessions, privacy.since ?? from)].sort((a, b) => a[0] - b[0]) }
+    const since = privacy.since ?? from
+    return { hours: [...usage.spend(sessions, since)].sort((a, b) => a[0] - b[0]), breakdown: usage.breakdown(sessions, since) }
   })
   // The path goes in the query string: it has slashes and is the project's only key.
   app.get('/v1/usage/projects', async (request, reply) => {

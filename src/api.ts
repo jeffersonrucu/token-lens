@@ -32,6 +32,21 @@ export type SessionUsage = {
   lastAt: string;
   // The agent deleted the transcript: it still counts for its project, but leaves the sessions list.
   lost?: boolean;
+  // Context sent with the main agent's latest reply.
+  context?: number;
+  // Ran /loop or scheduled its own wakeups.
+  loop?: boolean;
+  // Hook runs that timed out, were cancelled or failed, keyed by `event · command`.
+  hookFailures?: Record<string, { count: number; ms: number }>;
+};
+
+// Where a period's cost went; `agent` is the subagent type or "principal".
+export type Breakdown = {
+  cost: number;
+  subagents: number;
+  loop: number;
+  bigContext: number;
+  agents: { agent: string; model: string; cost: number; turns: number }[];
 };
 
 export type TokenTotals = {
@@ -61,6 +76,8 @@ export type SessionDetail = {
   })[];
   unpriced: string[];
   tools: Count[];
+  // Characters of text and images each tool returned into the context; missing from old summaries.
+  toolOutput?: { name: string; chars: number; images: number }[];
   mcp: Count[];
   skills: Count[];
   commands: Count[];
@@ -97,6 +114,8 @@ export type CostPoint = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  // Most of the cache write used the 1-hour TTL.
+  ttl1h?: boolean;
 };
 
 export type ChatMessage = {
@@ -216,7 +235,7 @@ export const usageApi = {
       method: "DELETE",
     }),
   // USD per hour since `from`, keyed by the start of each UTC hour in ms.
-  spend: (from: string) => request<{ hours: [number, number][] }>(`/usage/spend?${new URLSearchParams({ from })}`),
+  spend: (from: string) => request<{ hours: [number, number][]; breakdown: Breakdown }>(`/usage/spend?${new URLSearchParams({ from })}`),
   messages: (id: string, before: number, agent?: string) =>
     request<{ start: number; messages: ChatMessage[] }>(
       `/usage/sessions/${encodeURIComponent(id)}/messages?${new URLSearchParams({ before: String(before), ...(agent ? { agent } : {}) })}`,

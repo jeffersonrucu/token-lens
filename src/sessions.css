@@ -97,6 +97,7 @@
 .count-list b { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .count-list span { overflow: hidden; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
 .count-list strong { color: var(--text); font: 500 12px 'DM Mono', monospace; text-align: right; }
+.output-list li { grid-template-columns: minmax(0, 1fr) 60px auto; }
 
 .hook-command { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 .hook-command code { color: var(--muted); font: 11px 'DM Mono', monospace; }
@@ -286,22 +287,29 @@
 .overview-kpis .stat-highlight { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--glow) 45%, var(--surface)); }
 .overview-kpis .stat-highlight strong { color: var(--accent); }
 .overview-kpis .token-bar { height: 8px; margin-top: 4px; }
-.overview-kpis .overview-cache { flex-direction: row; align-items: center; gap: 16px; }
-.overview-cache > div { display: grid; gap: 6px; }
-.overview-cache circle { fill: none; stroke: var(--border); stroke-width: 9; }
-.overview-cache circle + circle { stroke: var(--series-cache-read); stroke-linecap: round; }
+.overview-where { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; color: var(--text-2); font-size: 13px; }
+.overview-where li { display: flex; justify-content: space-between; gap: 12px; }
+.overview-kpis .overview-where strong { font-size: 15px; }
 .overview-kpis .overview-live { display: flex; align-items: center; color: var(--success); font-size: 13px; font-weight: 600; }
 .overview-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .overview-heading a { color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: none; }
 .overview-heading a:hover { text-decoration: underline; }
 .overview-live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.live-card { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 18px; text-decoration: none; }
+.live-card { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 18px; text-decoration: none; }
 .live-card:hover { border-color: var(--line); }
 .live-card > strong { font-size: 15px; line-height: 1.3; }
 .live-card > span:not(.token-bar) { color: var(--muted); font-size: 12px; }
 .live-card small { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
 .live-card small span { display: flex; align-items: center; }
 .live-card b { color: var(--text); font: 500 13px 'DM Mono', monospace; }
+.live-card > .live-context { font-family: 'DM Mono', monospace; }
+.live-card > .live-context.big { color: var(--danger); font-weight: 600; }
+.overview-projects small { color: var(--muted); font-weight: 400; }
+.overview-hooks { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.overview-hooks li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+.overview-hooks span { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.overview-hooks strong { color: var(--danger); font: 500 13px 'DM Mono', monospace; }
+.overview-hooks small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .overview-projects { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
 .overview-projects li { display: grid; grid-template-columns: minmax(0, 170px) 1fr 80px; align-items: center; gap: 12px; font-size: 13px; }
 .overview-projects span { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }

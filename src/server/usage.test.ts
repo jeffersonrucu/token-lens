@@ -151,3 +151,35 @@ test('prices each reply once and buckets the spend by hour', async () => {
   assert.ok(Math.abs(spend[0][1] - 247.5e-6) < 1e-12)
   assert.deepEqual([...tracker.spend(sessions, '2026-01-01T01:00:00Z')].length, 1)
 })
+
+test('tracks the live context, /loop, failed hooks and where the cost went', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'usage-'))
+  const agents = join(root, 'proj', 's1', 'subagents')
+  mkdirSync(agents, { recursive: true })
+  const reply = (id: string, context: number, at: string, content: object[] = []) => JSON.stringify({
+    type: 'assistant', sessionId: 's1', timestamp: at,
+    message: { id, model: 'claude-opus-5', content, usage: { input_tokens: 0, output_tokens: 10, cache_read_input_tokens: context, cache_creation_input_tokens: 0 } },
+  })
+  writeFileSync(join(root, 'proj', 's1.jsonl'), [
+    reply('m1', 150_000, '2026-01-01T00:00:01Z', [{ type: 'tool_use', name: 'ScheduleWakeup' }]),
+    JSON.stringify({ type: 'attachment', sessionId: 's1', attachment: { type: 'hook_cancelled', hookEvent: 'Stop', command: 'ingest', durationMs: 10_000 } }),
+    reply('m2', 20_000, '2026-01-01T00:00:02Z'),
+  ].join('\n') + '\n')
+  writeFileSync(join(agents, 'agent-a.jsonl'), `${reply('m3', 30_000, '2026-01-01T00:00:03Z')}\n`)
+  writeFileSync(join(agents, 'agent-a.meta.json'), JSON.stringify({ agentType: 'worker' }))
+
+  const tracker = new UsageTracker(root, join(root, 'cache.json'))
+  await tracker.scan()
+  const [session] = tracker.list()
+
+  // The subagent's reply is later but its context is its own, not the session's.
+  assert.equal(session.context, 20_000)
+  assert.equal(session.loop, true)
+  assert.deepEqual(session.hookFailures, { 'Stop · ingest': { count: 1, ms: 10_000 } })
+  const split = tracker.breakdown([session], '2026-01-01T00:00:00Z')
+  const cost = (tokens: number) => tokens * 0.5 / 1e6 + 10 * 25 / 1e6
+  assert.ok(Math.abs(split.subagents - cost(30_000)) < 1e-9)
+  assert.ok(Math.abs(split.bigContext - cost(150_000)) < 1e-9)
+  assert.equal(split.loop, split.cost)
+  assert.deepEqual(split.agents.map(({ agent, turns }) => [agent, turns]), [['principal', 2], ['worker', 1]])
+})

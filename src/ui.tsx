@@ -252,11 +252,25 @@ export function Tokens({ value }: { value: number }) {
   return <span title={full.format(value)}>{compact.format(value)}</span>;
 }
 
+// The server's BIG_CONTEXT: past it every reply re-reads a large prefix.
+export const BIG_CONTEXT = 100_000;
+export const bigContext = (session: SessionUsage) => (session.context ?? 0) >= BIG_CONTEXT;
+
+function notifyBigContext(session: SessionUsage) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  new Notification("Contexto passou de 100 mil tokens", {
+    body: `${session.title ?? "Sem título"}: ${compact.format(session.context ?? 0)} tokens. Considere /compact ou /clear.`,
+    tag: session.id,
+  });
+}
+
 export function useUsageStream(onUnauthorized: () => void) {
   const [sessions, setSessions] = useState<SessionUsage[]>([]);
   const [status, setStatus] = useState<StreamStatus>("connecting");
   const [updated, setUpdated] = useState<Set<string>>(new Set());
   const [updates, setUpdates] = useState(0);
+  // Sessions already past BIG_CONTEXT: each alerts once per crossing, not on every reply or reconnect.
+  const alerted = useRef(new Set<string>());
   useEffect(() => {
     let source: EventSource | undefined;
     let retry: number | undefined;
@@ -264,12 +278,21 @@ export function useUsageStream(onUnauthorized: () => void) {
       source = new EventSource(usageStreamUrl);
       source.addEventListener("loading", () => setStatus("loading"));
       source.addEventListener("snapshot", (event) => {
-        setSessions(JSON.parse(event.data) as SessionUsage[]);
+        const list = JSON.parse(event.data) as SessionUsage[];
+        for (const session of list) if (bigContext(session)) alerted.current.add(session.id);
+        setSessions(list);
         setStatus("live");
       });
       source.addEventListener("update", (event) => {
         const changed = JSON.parse(event.data) as SessionUsage[];
         const ids = new Set(changed.map((session) => session.id));
+        for (const session of changed) {
+          if (!bigContext(session)) alerted.current.delete(session.id);
+          else if (!alerted.current.has(session.id)) {
+            alerted.current.add(session.id);
+            notifyBigContext(session);
+          }
+        }
         setSessions((current) =>
           [...changed, ...current.filter((session) => !ids.has(session.id))].sort(
             (a, b) => b.lastAt.localeCompare(a.lastAt),

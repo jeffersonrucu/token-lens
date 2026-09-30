@@ -1,12 +1,12 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { Folder } from "lucide-react";
-import { HARNESS_NAMES, usageApi, type Harness } from "./api";
+import { Bell, Folder } from "lucide-react";
+import { HARNESS_NAMES, usageApi, type Breakdown, type Harness } from "./api";
 import {
   PageHeader,
   PrivacyContext,
   StatusBadge,
   Tokens,
-  cacheShare,
+  bigContext,
   full,
   money,
   projectLabel,
@@ -20,7 +20,7 @@ import { ACTIVE_MS, StreamPlaceholder, ago } from "./lists";
 
 const PERIODS: Period[] = ["today", "week", "month"];
 const TOP_PROJECTS = 6;
-const RING = 2 * Math.PI * 34;
+const TOP_AGENTS = 8;
 const BAR_MAX = 150;
 const today = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" });
 const weekday = new Intl.DateTimeFormat("pt-BR", { weekday: "short" });
@@ -58,6 +58,8 @@ export function OverviewScreen({
   const { privacy } = useContext(PrivacyContext);
   const [now, setNow] = useState(() => Date.now());
   const [spend, setSpend] = useState<[number, number][] | null>(null);
+  const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
+  const [alerts, setAlerts] = useState(() => ("Notification" in window ? Notification.permission : "denied"));
   const [spendError, setSpendError] = useState(false);
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -68,9 +70,10 @@ export function OverviewScreen({
   useEffect(() => {
     let current = true;
     usageApi.spend(new Date(since).toISOString()).then(
-      ({ hours }) => {
+      ({ hours, breakdown }) => {
         if (!current) return;
         setSpend(hours);
+        setBreakdown(breakdown);
         setSpendError(false);
       },
       () => current && setSpendError(true),
@@ -100,7 +103,17 @@ export function OverviewScreen({
     if (session.project) byProject.set(session.project, (byProject.get(session.project) ?? 0) + session.cost);
   }
   const projects = [...byProject].sort((a, b) => b[1] - a[1]).slice(0, TOP_PROJECTS);
-  const share = cacheShare(totals);
+  // Summed over the sessions of the period, like the other lists of this page.
+  const hookFailures = new Map<string, { count: number; ms: number }>();
+  for (const session of inPeriod)
+    for (const [key, { count, ms }] of Object.entries(session.hookFailures ?? {})) {
+      const failure = hookFailures.get(key) ?? hookFailures.set(key, { count: 0, ms: 0 }).get(key)!;
+      failure.count += count;
+      failure.ms += ms;
+    }
+  const failedHooks = [...hookFailures].sort((a, b) => b[1].count - a[1].count);
+  const shareOf = (cost: number) => percent.format(breakdown?.cost ? cost / breakdown.cost : 0);
+  const agents = breakdown?.agents.slice(0, TOP_AGENTS) ?? [];
   const bars = buckets(period, since, now);
   const byKey = new Map(bars.map((bar) => [bar.key, bar]));
   for (const [hour, cost] of spend ?? []) {
@@ -132,6 +145,17 @@ export function OverviewScreen({
                 </button>
               ))}
             </div>
+            {alerts === "default" && (
+              <button
+                type="button"
+                className="button ghost"
+                onClick={() => void Notification.requestPermission().then(setAlerts)}
+                title="Avisa quando o contexto de uma sessão passa de 100 mil tokens, enquanto o painel estiver aberto"
+              >
+                <Bell size={14} aria-hidden="true" />
+                Ativar alertas
+              </button>
+            )}
             <StatusBadge status={status} updates={updates} onRefresh={refresh} />
           </>
         }
@@ -160,16 +184,20 @@ export function OverviewScreen({
                 {percent.format(total ? totals.cacheWrite / total : 0)}
               </small>
             </div>
-            <div className="overview-cache">
-              <svg width="84" height="84" viewBox="0 0 84 84" aria-hidden="true">
-                <circle cx="42" cy="42" r="34" />
-                <circle cx="42" cy="42" r="34" strokeDasharray={`${share * RING} ${RING}`} transform="rotate(-90 42 42)" />
-              </svg>
-              <div>
-                <span>Aproveitamento de cache</span>
-                <strong>{percent.format(share)}</strong>
-                <small>da entrada veio do cache</small>
-              </div>
+            <div>
+              <span>Para onde foi o custo</span>
+              {/* Each share stands alone: a reply of a subagent in a /loop session counts in both. */}
+              <ul className="overview-where">
+                <li title="Respostas dos subagentes">
+                  Subagentes<strong>{breakdown ? shareOf(breakdown.subagents) : "–"}</strong>
+                </li>
+                <li title="Sessões que usaram /loop ou agendaram o próprio retorno">
+                  Sessões com /loop<strong>{breakdown ? shareOf(breakdown.loop) : "–"}</strong>
+                </li>
+                <li title="Respostas que enviaram 100 mil tokens de contexto ou mais">
+                  Contexto ≥ 100 mil<strong>{breakdown ? shareOf(breakdown.bigContext) : "–"}</strong>
+                </li>
+              </ul>
             </div>
             <div>
               <span>Sessões</span>
@@ -201,6 +229,12 @@ export function OverviewScreen({
                     <b title={session.cost ? undefined : "Sem preço para este modelo"}>{session.cost ? money(session.cost) : "–"}</b>
                   </span>
                   <strong>{session.title ?? "Sem título"}</strong>
+                  {session.context !== undefined && (
+                    <span className={bigContext(session) ? "live-context big" : "live-context"}>
+                      Contexto <Tokens value={session.context} />
+                      {bigContext(session) && " · considere /compact ou /clear"}
+                    </span>
+                  )}
                   <span>{[HARNESS_NAMES[session.harness], session.models[0]].filter(Boolean).join(" · ")}</span>
                   <span className="token-bar row-bar" aria-hidden="true">
                     <i className="mix-input" style={{ flexGrow: session.input }} />
@@ -244,6 +278,44 @@ export function OverviewScreen({
                 </ol>
               )}
             </section>
+            <section className="overview-panel" aria-labelledby="agents-heading">
+              <div className="overview-heading">
+                <h2 id="agents-heading">Agentes e modelos</h2>
+              </div>
+              {agents.length ? (
+                <ul className="overview-projects">
+                  {agents.map((row) => (
+                    <li key={`${row.agent}\n${row.model}`}>
+                      <span title={`${row.agent} · ${row.model} · ${full.format(row.turns)} respostas`}>
+                        {row.agent} <small>{row.model.replace(/^claude-/, "")}</small>
+                      </span>
+                      <i aria-hidden="true">
+                        <b style={{ width: `${agents[0].cost ? (row.cost / agents[0].cost) * 100 : 0}%` }} />
+                      </i>
+                      <strong>{money(row.cost)}</strong>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="detail-empty">Nenhuma resposta com preço neste período.</p>
+              )}
+            </section>
+            {failedHooks.length > 0 && (
+              <section className="overview-panel" aria-labelledby="hooks-heading">
+                <div className="overview-heading">
+                  <h2 id="hooks-heading">Hooks com falha</h2>
+                </div>
+                <ul className="overview-hooks">
+                  {failedHooks.map(([key, { count, ms }]) => (
+                    <li key={key}>
+                      <span title={key}>{key}</span>
+                      <strong>{full.format(count)}×</strong>
+                      <small>{ms < 60_000 ? `${full.format(Math.round(ms / 1000))} s` : `${full.format(Math.round(ms / 60_000))} min`} esperando</small>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             <section className="overview-panel" aria-labelledby="projects-heading">
               <div className="overview-heading">
                 <h2 id="projects-heading">Projetos</h2>

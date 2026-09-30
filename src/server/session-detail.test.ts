@@ -108,3 +108,26 @@ test('tells who started each subagent and reads one on its own', async () => {
   assert.deepEqual(own.messages.map((message) => [message.role, message.text]), [['user', 'tarefa a1'], ['assistant', 'feito a1']])
   assert.deepEqual(own.agents.map((row) => [row.id, row.type, row.description, row.turns]), [['main', 'Explore', 'Busca', 1]])
 })
+
+test('sums what each tool returned into the context, text and images apart', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'detail-'))
+  const main = join(root, 's1.jsonl')
+  writeFileSync(main, [
+    line({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5', usage, content: [
+      { type: 'tool_use', id: 't1', name: 'Read' },
+      { type: 'tool_use', id: 't2', name: 'mcp__playwright__browser_take_screenshot' },
+    ] } }),
+    line({ type: 'user', message: { content: [
+      { type: 'tool_result', tool_use_id: 't1', content: 'abcd' },
+      { type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: 'ok' }, { type: 'image' }] },
+    ] } }),
+  ].join('\n'))
+
+  const detail = await readSessionDetail(main, [])
+
+  assert.deepEqual(detail.toolOutput, [
+    { name: 'Read', chars: 4, images: 0 },
+    { name: 'playwright › browser_take_screenshot', chars: 2, images: 1 },
+  ])
+  assert.deepEqual(mergeDetails([detail, detail]).toolOutput?.[0], { name: 'Read', chars: 8, images: 0 })
+})
