@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="public/brand/tokenlens-horizontal.svg" alt="TokenLens" width="320" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/tokenlens-horizontal.svg" />
+  <img src="public/brand/tokenlens-horizontal-light.svg" alt="TokenLens" width="320" />
+</picture>
 
 ### Veja, em tempo real, quantos tokens cada sessão do Claude Code, do Codex e do pi está gastando
 
