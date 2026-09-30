@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { authenticated } from './auth.js'
 import type { Database } from './database.js'
 import { codexCounts, readCodexDetail, readPiDetail, type CodexTokens } from './harnesses.js'
+import { costOf, type Costs, type Usage } from './pricing.js'
 import { readPrivacy, readScope, shows, type Privacy } from './privacy.js'
 import { agentIdOf, mergeDetails, readAgentMeta, readSessionDetail, type SessionDetail } from './session-detail.js'
 
@@ -24,6 +25,8 @@ export type SessionUsage = {
   output: number
   cacheRead: number
   cacheWrite: number
+  // Estimated USD, summed per reply; replies of models without a price add nothing.
+  cost: number
   firstAt: string
   lastAt: string
   // The agent deleted the transcript: the totals stay for the project, the session leaves the live list.
@@ -38,7 +41,7 @@ type Listener = (event: UsageEvent, sessions: SessionUsage[]) => void
 type Counts = { input: number; output: number; cacheRead: number; cacheWrite: number }
 // Keeps what each message id already added, so a later line of the same reply adds only the difference.
 // `at` lets an account count a session only from its own start date.
-type Seen = Counts & { at: string }
+type Seen = Counts & { at: string; cost: number }
 type Tracked = SessionUsage & { seen: Map<string, Seen>; customTitle: boolean }
 type CachedSession = SessionUsage & { seen: [string, Seen][]; customTitle: boolean }
 // What an earlier line of a Codex or pi file said, since later lines only carry usage.
@@ -53,7 +56,7 @@ type Parsed = {
   customTitle?: boolean
   // The first prompt, used only while the session has no other title.
   promptTitle?: boolean
-  reply?: { id: string; model?: string; counts: Counts }
+  reply?: { id: string; model?: string; counts: Counts; cost: number }
 }
 type Line = {
   type?: string
@@ -65,7 +68,7 @@ type Line = {
   message?: {
     id?: string
     model?: string
-    usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
+    usage?: Usage
   }
 }
 
@@ -79,13 +82,14 @@ const NEEDLES: Record<Harness, Buffer[]> = {
 const TITLE_LIMIT = 80
 const DEBOUNCE_MS = 300
 const CHAT_PAGE = 50
+const HOUR_MS = 3_600_000
 const SAVE_EVERY_MS = 10_000
 // fs.watch gets no events over a WSL share or a network drive: those roots are re-read on this interval.
 const POLL_EVERY_MS = Number(process.env.MONITOR_POLL_MS ?? 3_000)
 // Bounds the buffer on a cold start, when a long transcript is read from its first byte.
 const READ_CHUNK = 4 * 1024 * 1024
 // Bump when the cached shape or the counting rules change, so old caches are rebuilt.
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 
 const home = (variable: string, fallback: string) => process.env[variable] ?? join(homedir(), fallback)
 
@@ -274,14 +278,26 @@ export class UsageTracker {
   trim(session: SessionUsage, since: string): SessionUsage | undefined {
     const tracked = this.sessions.get(session.id)
     if (!tracked) return undefined
-    const trimmed: SessionUsage = { ...session, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, firstAt: session.lastAt }
+    const trimmed: SessionUsage = { ...session, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, firstAt: session.lastAt }
     for (const seen of tracked.seen.values()) {
       if (seen.at < since) continue
       trimmed.turns += 1
-      for (const kind of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) trimmed[kind] += seen[kind]
+      for (const kind of ['input', 'output', 'cacheRead', 'cacheWrite', 'cost'] as const) trimmed[kind] += seen[kind]
       if (seen.at < trimmed.firstAt) trimmed.firstAt = seen.at
     }
     return trimmed.turns ? trimmed : undefined
+  }
+
+  /** USD spent per hour (start of the UTC hour in ms) by these sessions' replies from `since` on. */
+  spend(sessions: SessionUsage[], since: string): Map<number, number> {
+    const hours = new Map<number, number>()
+    for (const { id } of sessions)
+      for (const seen of this.sessions.get(id)?.seen.values() ?? []) {
+        if (!seen.cost || seen.at < since) continue
+        const hour = Math.floor(Date.parse(seen.at) / HOUR_MS) * HOUR_MS
+        hours.set(hour, (hours.get(hour) ?? 0) + seen.cost)
+      }
+    return hours
   }
 
   /** Hides the project from every listing and pushes the new list to open pages. */
@@ -552,7 +568,8 @@ export class UsageTracker {
     const previous = session.seen.get(reply.id)
     if (!previous) session.turns += 1
     for (const kind of Object.keys(reply.counts) as (keyof Counts)[]) session[kind] += reply.counts[kind] - (previous?.[kind] ?? 0)
-    session.seen.set(reply.id, { ...reply.counts, at: parsed.at ?? previous?.at ?? '' })
+    session.cost += reply.cost - (previous?.cost ?? 0)
+    session.seen.set(reply.id, { ...reply.counts, cost: reply.cost, at: parsed.at ?? previous?.at ?? '' })
     if (reply.model && reply.model !== '<synthetic>' && !session.models.includes(reply.model)) session.models.push(reply.model)
     if (parsed.at) {
       if (!session.firstAt || parsed.at < session.firstAt) session.firstAt = parsed.at
@@ -564,7 +581,7 @@ export class UsageTracker {
   private session(id: string, harness: Harness): Tracked {
     let session = this.sessions.get(id)
     if (!session) {
-      session = { id, harness, title: null, project: null, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, firstAt: '', lastAt: '', seen: new Map(), customTitle: false }
+      session = { id, harness, title: null, project: null, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, firstAt: '', lastAt: '', seen: new Map(), customTitle: false }
       this.sessions.set(id, session)
     }
     return session
@@ -602,7 +619,7 @@ function parseClaude(entry: Line): Parsed | undefined {
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheWrite: usage.cache_creation_input_tokens ?? 0,
   }
-  return { ...base, at: entry.timestamp, cwd: entry.cwd, reply: { id: message.id, model: message.model, counts } }
+  return { ...base, at: entry.timestamp, cwd: entry.cwd, reply: { id: message.id, model: message.model, counts, cost: message.model ? sum(costOf(message.model, usage)) : 0 } }
 }
 
 type CodexLine = {
@@ -645,7 +662,9 @@ function parseCodex(entry: CodexLine, path: string, context: FileContext): Parse
   const info = payload.info
   if (payload.type !== 'token_count' || !info?.last_token_usage) return undefined
   // Codex may repeat the same count; the running total is unique per reply within a thread.
-  return { ...base, reply: { id: `${thread}:${info.total_token_usage?.total_tokens ?? entry.timestamp}`, model: context.model, counts: codexCounts(info.last_token_usage) } }
+  const counts = codexCounts(info.last_token_usage)
+  const priced = { input_tokens: counts.input, output_tokens: counts.output, cache_read_input_tokens: counts.cacheRead, cache_creation_input_tokens: counts.cacheWrite }
+  return { ...base, reply: { id: `${thread}:${info.total_token_usage?.total_tokens ?? entry.timestamp}`, model: context.model, counts, cost: context.model ? sum(costOf(context.model, priced)) : 0 } }
 }
 
 type PiLine = {
@@ -658,9 +677,13 @@ type PiLine = {
     role?: string
     model?: string
     content?: string | { type?: string; text?: string }[]
-    usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: Partial<Costs> }
   }
 }
+
+/** Total of a reply's costs; null (no known price) counts as zero. */
+const sum = (costs: Partial<Costs> | null | undefined) =>
+  (costs?.input ?? 0) + (costs?.output ?? 0) + (costs?.cacheRead ?? 0) + (costs?.cacheWrite ?? 0)
 
 function parsePi(entry: PiLine, path: string, context: FileContext): Parsed | undefined {
   const session = fileUuid(path)
@@ -680,14 +703,15 @@ function parsePi(entry: PiLine, path: string, context: FileContext): Parsed | un
   }
   const usage = message.usage
   if (message.role !== 'assistant' || !usage || !entry.id) return undefined
-  return { ...base, reply: { id: entry.id, model: message.model, counts: { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 } } }
+  // pi prices each reply itself, so its cost is taken as is.
+  return { ...base, reply: { id: entry.id, model: message.model, counts: { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 }, cost: sum(usage.cost) } }
 }
 
 /** One project's sessions summed as if they were a single session, keyed by the project path. */
 function projectUsage(project: string, sessions: SessionUsage[]): SessionUsage {
-  const total: SessionUsage = { id: project, harness: sessions[0].harness, title: basename(project), project, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, firstAt: sessions[0].firstAt, lastAt: sessions[0].lastAt }
+  const total: SessionUsage = { id: project, harness: sessions[0].harness, title: basename(project), project, models: [], turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, firstAt: sessions[0].firstAt, lastAt: sessions[0].lastAt }
   for (const session of sessions) {
-    for (const kind of ['turns', 'input', 'output', 'cacheRead', 'cacheWrite'] as const) total[kind] += session[kind]
+    for (const kind of ['turns', 'input', 'output', 'cacheRead', 'cacheWrite', 'cost'] as const) total[kind] += session[kind]
     for (const model of session.models) if (!total.models.includes(model)) total.models.push(model)
     if (session.firstAt < total.firstAt) total.firstAt = session.firstAt
     if (session.lastAt > total.lastAt) total.lastAt = session.lastAt
@@ -858,7 +882,7 @@ export function registerUsageRoutes(app: FastifyInstance, db: Database, usage: U
     if (agent) {
       // The summary reads `session`, so it takes the numbers and span of the subagent and its descendants.
       const { description, type } = detail.agents[0]!
-      const totals = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      const totals = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
       for (const row of detail.agents) for (const kind of Object.keys(totals) as (keyof typeof totals)[]) totals[kind] += row[kind]
       const models = [...new Set(detail.agents.flatMap((row) => row.models))]
       const at = detail.timeline.map((point) => point.at).sort()
@@ -956,6 +980,16 @@ export function registerUsageRoutes(app: FastifyInstance, db: Database, usage: U
     if (!details.length) return null
     return { session: projectUsage(path, sessions), messageStart: 0, ...mergeDetails(details) }
   }
+  // Hourly buckets let the page group by its own local hours and days.
+  app.get('/v1/usage/spend', async (request, reply) => {
+    const user = requireUser(request)
+    if (!user) return reply.code(401).send(expired)
+    if (!user.onboarded) return reply.code(403).send(setupPending)
+    const { from } = z.object({ from: z.iso.datetime() }).parse(request.query)
+    const privacy = narrowed(readPrivacy(db, user.id), from)
+    const sessions = view(privacy, usage.list())
+    return { hours: [...usage.spend(sessions, privacy.since ?? from)].sort((a, b) => a[0] - b[0]) }
+  })
   // The path goes in the query string: it has slashes and is the project's only key.
   app.get('/v1/usage/projects', async (request, reply) => {
     const user = requireUser(request)

@@ -130,3 +130,24 @@ test('a page that reconnects reads what changed while none was open', { timeout:
   assert.deepEqual(events, ['snapshot', 'update'])
   assert.deepEqual([tracker.list()[0].turns, tracker.list()[0].output], [2, 4])
 })
+
+test('prices each reply once and buckets the spend by hour', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'usage-'))
+  writeFileSync(join(root, 's1.jsonl'), [
+    // A reply split over two lines is priced by its final numbers only.
+    assistant('m1', 'claude-opus-5', 1, '2026-01-01T00:00:01Z'),
+    assistant('m1', 'claude-opus-5', 5, '2026-01-01T00:00:02Z'),
+    assistant('m2', 'claude-haiku-4-5', 7, '2026-01-01T01:30:00Z'),
+    assistant('m3', 'unknown-model', 7, '2026-01-01T01:40:00Z'),
+  ].join('\n') + '\n')
+  const tracker = new UsageTracker(root, join(root, 'cache.json'))
+  await tracker.scan()
+  const sessions = tracker.list()
+
+  // opus-5: 2×5 + 5×25 + 100×0.5 + 10×1.25×5; haiku-4-5: 2×1 + 7×5 + 100×0.1 + 10×1.25×1 (per million).
+  assert.ok(Math.abs(sessions[0].cost - (247.5 + 59.5) / 1e6) < 1e-12)
+  const spend = [...tracker.spend(sessions, '2026-01-01T00:00:00Z')]
+  assert.deepEqual(spend.map(([hour]) => new Date(hour).toISOString()), ['2026-01-01T00:00:00.000Z', '2026-01-01T01:00:00.000Z'])
+  assert.ok(Math.abs(spend[0][1] - 247.5e-6) < 1e-12)
+  assert.deepEqual([...tracker.spend(sessions, '2026-01-01T01:00:00Z')].length, 1)
+})
