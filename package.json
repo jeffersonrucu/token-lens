@@ -2,7 +2,7 @@
   "name": "tokenlens",
   "private": true,
   "license": "MIT",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "description": "Painel local de uso de tokens do Claude Code, do Codex e do pi",
   "author": "Jefferson Oliveira",
   "type": "module",
