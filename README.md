@@ -40,12 +40,13 @@ sem conexão externa.
 
 | | |
 |---|---|
-| **Visão geral** | Custo, tokens e aproveitamento de cache do dia, da semana ou do mês, as sessões ao vivo, o gasto por hora ou por dia e os projetos que mais gastaram. |
+| **Visão geral** | Custo e tokens do dia, da semana ou do mês; para onde foi o custo (subagentes, sessões com `/loop` e respostas com contexto de 100 mil tokens ou mais); o gasto por agente e modelo; os hooks que falharam; o gasto por hora ou por dia e os projetos que mais gastaram. |
+| **Alerta de contexto** | Cada sessão ao vivo mostra o contexto atual e fica vermelha ao passar de 100 mil tokens. Com **Ativar alertas**, o sistema avisa na hora, enquanto o painel estiver aberto. |
 | **Sessões ao vivo** | Cada sessão do Claude Code, do Codex e do pi, com o total de tokens (e quanto foi entrada, saída, cache lido e cache gravado), a parte da entrada servida do cache e o custo estimado. A linha pisca quando chega uma resposta nova. |
 | **Projetos** | Tudo o que foi gasto em cada pasta, somando as sessões. |
 | **Custo ao longo do tempo** | O custo acumulado da sessão, com as respostas fora da curva marcadas. |
 | **Contexto por resposta** | Quanto contexto foi enviado a cada resposta, quando o cache se perdeu (e quanto isso custou), e onde um `/compact` ou `/clear` cortou o contexto. O `/clear` abre uma sessão nova, e o gráfico leva de uma à outra. |
-| **Agentes e ferramentas** | O gasto dos subagentes (e quem iniciou cada um), das ferramentas, dos MCPs, das skills, dos comandos e dos hooks. No Claude Code, cada subagente abre o próprio detalhe. |
+| **Agentes e ferramentas** | O gasto dos subagentes (e quem iniciou cada um), das ferramentas, dos MCPs, das skills, dos comandos e dos hooks, e quanto texto e quantas imagens cada ferramenta devolveu ao contexto. No Claude Code, cada subagente abre o próprio detalhe. |
 | **Favoritos** | Marque uma sessão com a estrela e dê a ela um nome seu, para achá-la depois na página **Favoritos**. O monitor guarda uma cópia dela, que continua abrindo mesmo depois que o agente apaga a transcrição. |
 | **Histórico que não some** | O Claude Code apaga sessões antigas (`cleanupPeriodDays`). A sessão apagada sai da lista, mas os números dela continuam no projeto. |
 | **Sessões do Orca** | Aparecem sozinhas: o Orca roda esses mesmos CLIs, que gravam nas pastas de sempre. |
