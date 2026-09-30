@@ -15,7 +15,7 @@ sem conexão externa.
 ![Local first](https://img.shields.io/badge/100%25-local-7c5cff)
 ![Sem telemetria](https://img.shields.io/badge/telemetria-nenhuma-22c55e)
 
-<img src="docs/screenshots/sessoes.png" alt="Lista de sessões com tokens de entrada, saída e cache" width="900" />
+<img src="docs/screenshots/visao-geral.png" alt="Visão geral: custo, tokens, cache, sessões ao vivo, gasto por hora e projetos" width="900" />
 
 </div>
 
@@ -40,7 +40,8 @@ sem conexão externa.
 
 | | |
 |---|---|
-| **Sessões ao vivo** | Cada sessão do Claude Code, do Codex e do pi, com entrada, saída, cache lido, cache gravado e total. A linha pisca quando chega uma resposta nova. |
+| **Visão geral** | Custo, tokens e aproveitamento de cache do dia, da semana ou do mês, as sessões ao vivo, o gasto por hora ou por dia e os projetos que mais gastaram. |
+| **Sessões ao vivo** | Cada sessão do Claude Code, do Codex e do pi, com o total de tokens (e quanto foi entrada, saída, cache lido e cache gravado), a parte da entrada servida do cache e o custo estimado. A linha pisca quando chega uma resposta nova. |
 | **Projetos** | Tudo o que foi gasto em cada pasta, somando as sessões. |
 | **Custo ao longo do tempo** | O custo acumulado da sessão, com as respostas fora da curva marcadas. |
 | **Contexto por resposta** | Quanto contexto foi enviado a cada resposta, quando o cache se perdeu (e quanto isso custou), e onde um `/compact` ou `/clear` cortou o contexto. O `/clear` abre uma sessão nova, e o gráfico leva de uma à outra. |
@@ -58,12 +59,18 @@ sem conexão externa.
 
 <table>
   <tr>
+    <td><img src="docs/screenshots/sessoes.png" alt="Lista de sessões com tokens, cache e custo" /></td>
     <td><img src="docs/screenshots/projetos.png" alt="Uso por projeto" /></td>
-    <td><img src="docs/screenshots/privacidade.png" alt="Configurações de privacidade" /></td>
   </tr>
   <tr>
+    <td align="center"><sub>Sessões: tokens, cache e custo de cada uma</sub></td>
     <td align="center"><sub>Uso por projeto</sub></td>
-    <td align="center"><sub>Privacidade: modo manual, pausa, ocultar chat e caminhos</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/privacidade.png" alt="Configurações de privacidade" width="50%" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Privacidade: modo manual, pausa, ocultar chat e caminhos</sub></td>
   </tr>
 </table>
 
